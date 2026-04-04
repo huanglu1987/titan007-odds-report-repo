@@ -23,6 +23,482 @@ OUTCOME_LABELS = {
     "away": "客胜",
 }
 
+DECISION_TYPE_LABELS = {
+    "single": "单选",
+    "double": "双选",
+    "abstain": "放弃",
+}
+
+PREDICTION_MODE_LABELS = {
+    "primary": "按首选单结果输出",
+    "keep_order": "保留原始双选顺序",
+    "secondary_first": "双选改按次选优先顺序输出",
+    "observe_leader": "进入观察池，展示第一倾向",
+    "skip": "过滤，不给投注结果",
+}
+
+BETTING_DECISION_RULES = [
+    {
+        "id": "high_strong_home_strong_single",
+        "confidence": "高",
+        "structure": "高-强主",
+        "base_types": ("single",),
+        "top_gap_min": 0.50,
+        "top_gap_max": None,
+        "top_gap_label": "0.50以上",
+        "action": "强单",
+        "prediction_mode": "primary",
+        "note": "高-强主在 0.50 以上命中率最高，可直接作为强单。",
+        "sample_note": "样本 12 场，命中率 91.67%。",
+    },
+    {
+        "id": "high_strong_away_strong_single",
+        "confidence": "高",
+        "structure": "高-强客",
+        "base_types": ("single",),
+        "top_gap_min": 0.50,
+        "top_gap_max": None,
+        "top_gap_label": "0.50以上",
+        "action": "强单",
+        "prediction_mode": "primary",
+        "note": "高-强客和高-强主是对称结构，差值足够大时按强单处理。",
+        "sample_note": "样本偏少，但已有样本全部命中。",
+    },
+    {
+        "id": "high_strong_home_single",
+        "confidence": "高",
+        "structure": "高-强主",
+        "base_types": ("single",),
+        "top_gap_min": 0.20,
+        "top_gap_max": 0.50,
+        "top_gap_label": "0.20-0.50",
+        "action": "普通单选",
+        "prediction_mode": "primary",
+        "note": "高-强主在 0.20 到 0.50 之间仍可保留单选，但不升格为强单。",
+        "sample_note": "样本 39 场，命中率约 51%。",
+    },
+    {
+        "id": "high_strong_away_single",
+        "confidence": "高",
+        "structure": "高-强客",
+        "base_types": ("single",),
+        "top_gap_min": 0.20,
+        "top_gap_max": 0.50,
+        "top_gap_label": "0.20-0.50",
+        "action": "普通单选",
+        "prediction_mode": "primary",
+        "note": "高-强客在中高差值段先保留为普通单选，避免样本不足时过度放大。",
+        "sample_note": "样本偏少，先按普通单选执行。",
+    },
+    {
+        "id": "high_side_split_single",
+        "confidence": "高",
+        "structure": "高-分胜负",
+        "base_types": ("single",),
+        "top_gap_min": 0.20,
+        "top_gap_max": 0.30,
+        "top_gap_label": "0.20-0.30",
+        "action": "普通单选",
+        "prediction_mode": "primary",
+        "note": "高-分胜负在 0.20 到 0.30 区间可以保留原始单选。",
+        "sample_note": "样本 16 场，命中率 56.25%。",
+    },
+    {
+        "id": "high_defend_draw_single",
+        "confidence": "高",
+        "structure": "高-防平",
+        "base_types": ("single",),
+        "top_gap_min": 0.10,
+        "top_gap_max": None,
+        "top_gap_label": "0.10以上",
+        "action": "普通单选",
+        "prediction_mode": "primary",
+        "note": "高-防平如果模型已经收敛成单选，先保留为普通单选。",
+        "sample_note": "样本不大，先保守纳入普通单选。",
+    },
+    {
+        "id": "high_defend_draw_double",
+        "confidence": "高",
+        "structure": "高-防平",
+        "base_types": ("double",),
+        "top_gap_min": 0.10,
+        "top_gap_max": None,
+        "top_gap_label": "0.10以上",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "高-防平如果模型给出双选，继续保留双选。",
+        "sample_note": "样本很少，仅作为保守延续规则。",
+    },
+    {
+        "id": "medium_bias_home_secondary_first",
+        "confidence": "中",
+        "structure": "中-偏主",
+        "base_types": ("double",),
+        "top_gap_min": 0.00,
+        "top_gap_max": 0.10,
+        "top_gap_label": "0-0.10",
+        "action": "双选次选优先",
+        "prediction_mode": "secondary_first",
+        "note": "中-偏主在极低差值时首选偏弱，次选反而更值得优先看。",
+        "sample_note": "样本 9 场，次选命中率 55.56%，高于首选 22.22%。",
+    },
+    {
+        "id": "medium_bias_home_standard_double",
+        "confidence": "中",
+        "structure": "中-偏主",
+        "base_types": ("double",),
+        "top_gap_min": 0.10,
+        "top_gap_max": 0.20,
+        "top_gap_label": "0.10-0.20",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "中-偏主在 0.10 到 0.20 区间继续保留双选，不压成单选。",
+        "sample_note": "样本 42 场，覆盖率 73.81%。",
+    },
+    {
+        "id": "medium_bias_home_primary_first",
+        "confidence": "中",
+        "structure": "中-偏主",
+        "base_types": ("double",),
+        "top_gap_min": 0.20,
+        "top_gap_max": None,
+        "top_gap_label": "0.20以上",
+        "action": "双选首选优先",
+        "prediction_mode": "keep_order",
+        "note": "中-偏主在 0.20 以上时首选优势明显，按首选优先双选处理。",
+        "sample_note": "样本 9 场，首选命中率 77.78%，覆盖率 100%。",
+    },
+    {
+        "id": "medium_bias_draw_standard_double_low",
+        "confidence": "中",
+        "structure": "中-偏平",
+        "base_types": ("double",),
+        "top_gap_min": 0.00,
+        "top_gap_max": 0.20,
+        "top_gap_label": "0-0.20",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "中-偏平在低差值区间更适合继续保留双选。",
+        "sample_note": "低差值样本覆盖率稳定，但不适合改单关平局。",
+    },
+    {
+        "id": "medium_bias_away_standard_double",
+        "confidence": "中",
+        "structure": "中-偏客",
+        "base_types": ("double",),
+        "top_gap_min": 0.10,
+        "top_gap_max": 0.20,
+        "top_gap_label": "0.10-0.20",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "中-偏客在 0.10 到 0.20 区间先按谨慎双选处理。",
+        "sample_note": "样本 11 场，覆盖率 63.64%。",
+    },
+    {
+        "id": "medium_bias_away_primary_first",
+        "confidence": "中",
+        "structure": "中-偏客",
+        "base_types": ("double",),
+        "top_gap_min": 0.20,
+        "top_gap_max": None,
+        "top_gap_label": "0.20以上",
+        "action": "双选首选优先",
+        "prediction_mode": "keep_order",
+        "note": "中-偏客在 0.20 以上时首选已经更可信，按首选优先双选处理。",
+        "sample_note": "0.20-0.30 样本较少，但首选命中率已明显抬升。",
+    },
+    {
+        "id": "cautious_tug_of_war_double",
+        "confidence": "谨慎",
+        "structure": "谨慎-主客胶着",
+        "base_types": ("double",),
+        "top_gap_min": 0.00,
+        "top_gap_max": 0.10,
+        "top_gap_label": "0-0.10",
+        "action": "双选次选优先",
+        "prediction_mode": "secondary_first",
+        "note": "谨慎-主客胶着如果仍给双选，只保留双选且改按次选优先看。",
+        "sample_note": "样本 7 场，次选命中率 57.14%，覆盖率 100%。",
+    },
+    {
+        "id": "cautious_tug_of_war_abstain",
+        "confidence": "谨慎",
+        "structure": "谨慎-主客胶着",
+        "base_types": ("abstain",),
+        "top_gap_min": 0.00,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "过滤",
+        "prediction_mode": "skip",
+        "note": "谨慎-主客胶着且模型放弃时，直接过滤，不进入投注池。",
+        "sample_note": "对应样本第一倾向不稳定，继续过滤更合适。",
+    },
+    {
+        "id": "cautious_abstain_filter",
+        "confidence": "谨慎",
+        "structure": "谨慎-不建议单押",
+        "base_types": ("abstain",),
+        "top_gap_min": 0.00,
+        "top_gap_max": 0.40,
+        "top_gap_label": "0-0.40",
+        "action": "过滤",
+        "prediction_mode": "skip",
+        "note": "谨慎-不建议单押在 0.40 以下统一过滤。",
+        "sample_note": "低于 0.40 时第一倾向稳定性不足。",
+    },
+    {
+        "id": "cautious_abstain_observe",
+        "confidence": "谨慎",
+        "structure": "谨慎-不建议单押",
+        "base_types": ("abstain",),
+        "top_gap_min": 0.40,
+        "top_gap_max": None,
+        "top_gap_label": "0.40以上",
+        "action": "观察池",
+        "prediction_mode": "observe_leader",
+        "note": "谨慎-不建议单押在 0.40 以上只进入观察池，不直接出手。",
+        "sample_note": "0.40 以上第一倾向明显增强，但仍属于谨慎层。",
+    },
+    {
+        "id": "high_single_fallback",
+        "confidence": "高",
+        "structure": None,
+        "base_types": ("single",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "普通单选",
+        "prediction_mode": "primary",
+        "note": "高信任且已给出单选时，未命中特定格子就按普通单选兜底。",
+        "sample_note": "兜底规则。",
+    },
+    {
+        "id": "high_double_fallback",
+        "confidence": "高",
+        "structure": None,
+        "base_types": ("double",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "高信任但未命中特定格子时，保留原始双选。",
+        "sample_note": "兜底规则。",
+    },
+    {
+        "id": "medium_single_fallback",
+        "confidence": "中",
+        "structure": None,
+        "base_types": ("single",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "普通单选",
+        "prediction_mode": "primary",
+        "note": "中信任如果模型已经收敛到单选，先按普通单选保留。",
+        "sample_note": "兜底规则。",
+    },
+    {
+        "id": "medium_double_fallback",
+        "confidence": "中",
+        "structure": None,
+        "base_types": ("double",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "中信任未命中特定格子时，保留原始双选。",
+        "sample_note": "兜底规则。",
+    },
+    {
+        "id": "cautious_single_fallback",
+        "confidence": "谨慎",
+        "structure": None,
+        "base_types": ("single",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "观察池",
+        "prediction_mode": "observe_leader",
+        "note": "谨慎层即使被模型收敛成单选，也先进入观察池。",
+        "sample_note": "兜底规则。",
+    },
+    {
+        "id": "cautious_double_fallback",
+        "confidence": "谨慎",
+        "structure": None,
+        "base_types": ("double",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "标准双选",
+        "prediction_mode": "keep_order",
+        "note": "谨慎层未命中特定格子时，只保留标准双选。",
+        "sample_note": "兜底规则。",
+    },
+    {
+        "id": "cautious_abstain_fallback",
+        "confidence": "谨慎",
+        "structure": None,
+        "base_types": ("abstain",),
+        "top_gap_min": None,
+        "top_gap_max": None,
+        "top_gap_label": "全部",
+        "action": "过滤",
+        "prediction_mode": "skip",
+        "note": "谨慎层只要模型放弃，默认不过滤成投注结果。",
+        "sample_note": "兜底规则。",
+    },
+]
+
+BETTING_DECISION_HISTORY = {
+    "high_strong_home_strong_single": {
+        "samples": 12,
+        "metrics": ({"label": "单选命中率", "value": 0.9167},),
+    },
+    "high_strong_away_strong_single": {
+        "samples": 4,
+        "metrics": ({"label": "单选命中率", "value": 1.0},),
+    },
+    "high_strong_home_single": {
+        "samples": 39,
+        "metrics": ({"label": "单选命中率", "value": 20 / 39},),
+    },
+    "high_strong_away_single": {
+        "samples": 4,
+        "metrics": ({"label": "单选命中率", "value": 1.0},),
+    },
+    "high_side_split_single": {
+        "samples": 16,
+        "metrics": ({"label": "单选命中率", "value": 0.5625},),
+    },
+    "high_defend_draw_single": {
+        "samples": 6,
+        "metrics": ({"label": "单选命中率", "value": 0.8333},),
+    },
+    "high_defend_draw_double": {
+        "samples": 1,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.0},
+            {"label": "次选命中率", "value": 1.0},
+            {"label": "双选覆盖率", "value": 1.0},
+        ),
+    },
+    "medium_bias_home_secondary_first": {
+        "samples": 9,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.2222},
+            {"label": "次选命中率", "value": 0.5556},
+            {"label": "双选覆盖率", "value": 0.7778},
+        ),
+    },
+    "medium_bias_home_standard_double": {
+        "samples": 42,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.4524},
+            {"label": "次选命中率", "value": 0.2857},
+            {"label": "双选覆盖率", "value": 0.7381},
+        ),
+    },
+    "medium_bias_home_primary_first": {
+        "samples": 9,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.7778},
+            {"label": "次选命中率", "value": 0.2222},
+            {"label": "双选覆盖率", "value": 1.0},
+        ),
+    },
+    "medium_bias_draw_standard_double_low": {
+        "samples": 45,
+        "metrics": (
+            {"label": "首选命中率", "value": 22 / 45},
+            {"label": "次选命中率", "value": 10 / 45},
+            {"label": "双选覆盖率", "value": 32 / 45},
+        ),
+    },
+    "medium_bias_away_standard_double": {
+        "samples": 11,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.3636},
+            {"label": "次选命中率", "value": 0.2727},
+            {"label": "双选覆盖率", "value": 0.6364},
+        ),
+    },
+    "medium_bias_away_primary_first": {
+        "samples": 6,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.6667},
+            {"label": "次选命中率", "value": 0.0},
+            {"label": "双选覆盖率", "value": 0.6667},
+        ),
+    },
+    "cautious_tug_of_war_double": {
+        "samples": 7,
+        "metrics": (
+            {"label": "首选命中率", "value": 0.4286},
+            {"label": "次选命中率", "value": 0.5714},
+            {"label": "双选覆盖率", "value": 1.0},
+        ),
+    },
+    "cautious_tug_of_war_abstain": {
+        "samples": 65,
+        "metrics": (
+            {"label": "第一倾向命中率", "value": 0.4308},
+            {"label": "前二覆盖率", "value": 0.6769},
+        ),
+    },
+    "cautious_abstain_filter": {
+        "samples": 318,
+        "metrics": (
+            {"label": "第一倾向命中率", "value": 156 / 318},
+            {"label": "前二覆盖率", "value": 254 / 318},
+        ),
+    },
+    "cautious_abstain_observe": {
+        "samples": 78,
+        "metrics": (
+            {"label": "第一倾向命中率", "value": 55 / 78},
+            {"label": "前二覆盖率", "value": 72 / 78},
+        ),
+    },
+    "high_single_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+    "high_double_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+    "medium_single_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+    "medium_double_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+    "cautious_single_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+    "cautious_double_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+    "cautious_abstain_fallback": {
+        "samples": None,
+        "metrics": (),
+        "note": "无独立历史样本，按兜底规则执行。",
+    },
+}
+
 FALLBACK_THRESHOLDS = {
     "drawMinimum": 0.283,
     "drawLeadSlack": 0.014,
@@ -396,6 +872,192 @@ def build_rule_explanation(
     return f"{'，'.join(parts)}，最终偏向 {lead_outcome}。"
 
 
+def normalize_decision_type(decision_type: str) -> str:
+    if decision_type == "double":
+        return "double"
+    if decision_type == "abstain":
+        return "abstain"
+    return "single"
+
+
+def top_gap_in_rule_range(
+    top_gap: float,
+    top_gap_min: float | None,
+    top_gap_max: float | None,
+) -> bool:
+    if top_gap_min is not None and top_gap < top_gap_min:
+        return False
+    if top_gap_max is not None and top_gap >= top_gap_max:
+        return False
+    return True
+
+
+def format_double_prediction(primary_key: str | None, secondary_key: str | None) -> str:
+    if primary_key is None:
+        return ""
+    if secondary_key is None:
+        return OUTCOME_LABELS[primary_key]
+    return f"{OUTCOME_LABELS[primary_key]}/{OUTCOME_LABELS[secondary_key]}"
+
+
+def format_percentage(value: float) -> str:
+    return f"{value * 100:.2f}%"
+
+
+def get_rule_history(rule_id: str) -> dict:
+    return BETTING_DECISION_HISTORY.get(
+        rule_id,
+        {
+            "samples": None,
+            "metrics": (),
+            "note": "无独立历史样本。",
+        },
+    )
+
+
+def format_history_summary(history: dict) -> str:
+    samples = history.get("samples")
+    metrics = history.get("metrics", ())
+    note = history.get("note", "")
+
+    parts: list[str] = []
+    if samples is not None:
+        parts.append(f"样本{samples}场")
+    for metric in metrics:
+        parts.append(f"{metric['label']}{format_percentage(metric['value'])}")
+    if note:
+        parts.append(note)
+    return "｜".join(parts) if parts else "无独立历史样本"
+
+
+def format_prediction_from_mode(
+    prediction_mode: str,
+    decision: dict[str, str | None],
+    ranked: list[dict[str, float]],
+) -> str:
+    primary_key = decision["primaryKey"]
+    secondary_key = decision["secondaryKey"]
+
+    if prediction_mode == "primary":
+        return OUTCOME_LABELS[primary_key]
+    if prediction_mode == "keep_order":
+        return format_double_prediction(primary_key, secondary_key)
+    if prediction_mode == "secondary_first":
+        if secondary_key is None:
+            return OUTCOME_LABELS[primary_key]
+        return format_double_prediction(secondary_key, primary_key)
+    if prediction_mode == "observe_leader":
+        return f"观察：{OUTCOME_LABELS[ranked[0]['key']]}"
+    if prediction_mode == "skip":
+        return "不投注"
+    raise ValueError(f"未知的 prediction_mode: {prediction_mode}")
+
+
+def build_decision_basis(
+    structure_label: str,
+    decision_type: str,
+    top_gap_label: str,
+) -> str:
+    return f"{structure_label}｜{DECISION_TYPE_LABELS[decision_type]}｜前二差值{top_gap_label}"
+
+
+def resolve_betting_decision(
+    base_confidence: str,
+    confidence_profile: dict[str, str],
+    decision: dict[str, str | None],
+    ranked: list[dict[str, float]],
+    metrics: dict[str, float],
+) -> dict[str, str]:
+    structure_label = confidence_profile["label"]
+    decision_type = normalize_decision_type(decision["type"])
+    top_gap = metrics["topGap"]
+
+    for rule in BETTING_DECISION_RULES:
+        if rule["confidence"] != base_confidence:
+            continue
+        if rule["structure"] is not None and rule["structure"] != structure_label:
+            continue
+        if decision_type not in rule["base_types"]:
+            continue
+        if not top_gap_in_rule_range(top_gap, rule["top_gap_min"], rule["top_gap_max"]):
+            continue
+        history = get_rule_history(rule["id"])
+
+        return {
+            "ruleId": rule["id"],
+            "action": rule["action"],
+            "finalPrediction": format_prediction_from_mode(
+                rule["prediction_mode"],
+                decision,
+                ranked,
+            ),
+            "decisionBasis": build_decision_basis(
+                structure_label,
+                decision_type,
+                rule["top_gap_label"],
+            ),
+            "predictionMode": rule["prediction_mode"],
+            "ruleNote": rule["note"],
+            "sampleNote": rule["sample_note"],
+            "historySampleSize": (
+                str(history["samples"]) if history.get("samples") is not None else "无独立样本"
+            ),
+            "historyAccuracySummary": format_history_summary(history),
+        }
+
+    return {
+        "ruleId": "unmatched",
+        "action": "过滤",
+        "finalPrediction": "不投注",
+        "decisionBasis": build_decision_basis(structure_label, decision_type, "全部"),
+        "predictionMode": "skip",
+        "ruleNote": "未命中显式规则，按过滤处理。",
+        "sampleNote": "兜底规则。",
+        "historySampleSize": "无独立样本",
+        "historyAccuracySummary": "无独立历史样本，按过滤处理。",
+    }
+
+
+def get_betting_decision_table() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for rule in BETTING_DECISION_RULES:
+        structure_label = rule["structure"] or "全部（兜底）"
+        base_types = "、".join(DECISION_TYPE_LABELS[item] for item in rule["base_types"])
+        history = get_rule_history(rule["id"])
+        history_metrics = list(history.get("metrics", ()))
+        rows.append(
+            {
+                "信任等级": rule["confidence"],
+                "结构标签": structure_label,
+                "原始类型": base_types,
+                "前二差值范围": rule["top_gap_label"],
+                "最终决策动作": rule["action"],
+                "最终预测结果规则": PREDICTION_MODE_LABELS[rule["prediction_mode"]],
+                "历史样本数": (
+                    str(history["samples"]) if history.get("samples") is not None else "无独立样本"
+                ),
+                "历史准确率1": (
+                    f"{history_metrics[0]['label']}{format_percentage(history_metrics[0]['value'])}"
+                    if len(history_metrics) >= 1
+                    else ""
+                ),
+                "历史准确率2": (
+                    f"{history_metrics[1]['label']}{format_percentage(history_metrics[1]['value'])}"
+                    if len(history_metrics) >= 2
+                    else ""
+                ),
+                "历史准确率3": (
+                    f"{history_metrics[2]['label']}{format_percentage(history_metrics[2]['value'])}"
+                    if len(history_metrics) >= 3
+                    else ""
+                ),
+                "规则说明": rule["note"],
+                "样本说明": format_history_summary(history),
+            }
+        )
+    return rows
+
+
 def validate_rows(rows: list[dict]) -> list[dict]:
     if len(rows) != len(FIXED_COMPANIES):
         raise ValueError(f"必须提供 {len(FIXED_COMPANIES)} 家公司的初始赔率。")
@@ -606,10 +1268,20 @@ def compute_rule_prediction(rows: list[dict]) -> dict:
             else OUTCOME_LABELS[decision["primaryKey"]]
         )
     )
+    betting_decision = resolve_betting_decision(
+        base_confidence,
+        confidence_profile,
+        decision,
+        ranked,
+        {
+            "topGap": top_gap,
+        },
+    )
 
     return {
         "companies": FIXED_COMPANIES,
         "recommendation": recommendation,
+        "bettingDecision": betting_decision,
         "allowDouble": decision["type"] == "double",
         "abstained": decision["type"] == "abstain",
         "drawSingle": decision["type"] == "draw-single",

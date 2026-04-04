@@ -6,6 +6,9 @@ import subprocess
 from pathlib import Path
 
 
+DESKTOP_DIR = Path.home() / "Desktop"
+
+
 def resolve_project_root(explicit_root: Path | None) -> Path:
     if explicit_root is not None:
         return explicit_root.resolve()
@@ -25,6 +28,13 @@ def resolve_project_root(explicit_root: Path | None) -> Path:
     )
 
 
+def build_default_output_path(start: str, end: str, confidences: str) -> Path:
+    confidence_slug = "_".join(sorted(item.strip() for item in confidences.split(",") if item.strip()))
+    start_slug = start.replace("-", "").replace(":", "").replace(" ", "_")
+    end_slug = end.replace("-", "").replace(":", "").replace(" ", "_")
+    return DESKTOP_DIR / f"titan007_{confidence_slug}_confidence_{start_slug}_{end_slug}.xlsx"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="运行 Titan007 欧赔预测 Excel 报表生成器。"
@@ -39,12 +49,12 @@ def main() -> None:
     parser.add_argument(
         "--confidences",
         default="高,中",
-        help="信任等级，逗号分隔，例如：高 或 高,中",
+        help="信任等级，逗号分隔，例如：高、高,中、高,中,谨慎",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help="输出 Excel 路径；不传则由底层脚本自动命名。",
+        help="输出 Excel 路径；不传则默认导出到桌面并自动命名。",
     )
     args = parser.parse_args()
 
@@ -52,6 +62,12 @@ def main() -> None:
     target_script = project_root / "scripts" / "generate_titan007_high_confidence_report.py"
     if not target_script.exists():
         raise FileNotFoundError(f"未找到报表脚本: {target_script}")
+
+    output_path = args.output.resolve() if args.output else build_default_output_path(
+        args.start,
+        args.end,
+        args.confidences,
+    )
 
     command = [
         "python3",
@@ -62,9 +78,9 @@ def main() -> None:
         args.end,
         "--confidences",
         args.confidences,
+        "--output",
+        str(output_path),
     ]
-    if args.output:
-        command.extend(["--output", str(args.output.resolve())])
 
     completed = subprocess.run(
         command,
@@ -80,19 +96,8 @@ def main() -> None:
             print(completed.stderr, end="")
         raise SystemExit(completed.returncode)
 
-    generated_output = args.output.resolve() if args.output else None
-    if generated_output is None:
-        stdout_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-        for line in stdout_lines:
-            if line.endswith(".xlsx"):
-                generated_output = Path(line).resolve()
-                break
-
-    if generated_output is None:
-        raise RuntimeError("脚本执行成功，但未能识别输出文件路径。")
-
     confidence_text = args.confidences.replace(",", " + ")
-    print(f"Excel 已生成：{generated_output}")
+    print(f"Excel 已生成：{output_path}")
     print(f"时间范围：{args.start} 至 {args.end}（北京时间）")
     print(f"信任等级：{confidence_text}")
 

@@ -29,7 +29,11 @@ PLUGIN_DIR = ROOT_DIR / "runtime" / "football-odds-predictor"
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from predictor_py import FIXED_COMPANIES, compute_rule_prediction  # noqa: E402
+from predictor_py import (  # noqa: E402
+    FIXED_COMPANIES,
+    compute_rule_prediction,
+    get_betting_decision_table,
+)
 
 
 OUTPUT_DIR = ROOT_DIR / "output" / "spreadsheet"
@@ -41,6 +45,10 @@ FUTURE_SCHEDULE_URL_TEMPLATE = "https://bf.titan007.com/football/Next_{date}.htm
 INITIAL_MAX_WORKERS = 8
 RETRY_MAX_WORKERS = 3
 ALLOWED_CONFIDENCES = {"高", "中"}
+LARGE_WINDOW_MATCH_THRESHOLD = 500
+LARGE_WINDOW_MAX_WORKERS = 24
+LARGE_WINDOW_RETRY_MAX_WORKERS = 8
+VALID_CONFIDENCES = {"高", "中", "谨慎"}
 
 
 @dataclass
@@ -66,6 +74,11 @@ class MatchReportRow:
     confidence: str
     consensus: float
     top_gap: float
+    final_action: str
+    final_prediction: str
+    decision_basis: str
+    history_sample_size: str
+    history_accuracy_summary: str
     source_match_id: str
     source_page_url: str
     source_js_url: str
@@ -198,6 +211,12 @@ def format_confidence_scope() -> str:
     return "或".join(ordered) if ordered else "未指定"
 
 
+def resolve_worker_counts(match_count: int) -> tuple[int, int]:
+    if match_count >= LARGE_WINDOW_MATCH_THRESHOLD:
+        return LARGE_WINDOW_MAX_WORKERS, LARGE_WINDOW_RETRY_MAX_WORKERS
+    return INITIAL_MAX_WORKERS, RETRY_MAX_WORKERS
+
+
 def normalize_sheet_name(name: str) -> str:
     cleaned = name.replace("/", "／").replace("\\", "＼").replace("*", "＊")
     cleaned = cleaned.replace(":", "：").replace("?", "？").replace("[", "［").replace("]", "］")
@@ -216,9 +235,10 @@ def iter_report_rows() -> tuple[list[MatchReportRow], list[dict[str, str]]]:
     rows: list[MatchReportRow] = []
     audit_rows: list[dict[str, str]] = []
     future_matches = parse_future_schedule_matches()
+    initial_max_workers, retry_max_workers = resolve_worker_counts(len(future_matches))
     report_rows, first_pass_audits = process_future_matches(
         future_matches,
-        max_workers=INITIAL_MAX_WORKERS,
+        max_workers=initial_max_workers,
     )
     rows.extend(report_rows)
     audit_rows.extend(first_pass_audits)
@@ -234,7 +254,7 @@ def iter_report_rows() -> tuple[list[MatchReportRow], list[dict[str, str]]]:
         ]
         retry_rows, retry_audits = process_future_matches(
             retry_matches,
-            max_workers=RETRY_MAX_WORKERS,
+            max_workers=retry_max_workers,
         )
         rows.extend(retry_rows)
 
@@ -349,6 +369,11 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             confidence=prediction["confidence"],
             consensus=prediction["metrics"]["consensus"],
             top_gap=prediction["metrics"]["topGap"],
+            final_action=prediction["bettingDecision"]["action"],
+            final_prediction=prediction["bettingDecision"]["finalPrediction"],
+            decision_basis=prediction["bettingDecision"]["decisionBasis"],
+            history_sample_size=prediction["bettingDecision"]["historySampleSize"],
+            history_accuracy_summary=prediction["bettingDecision"]["historyAccuracySummary"],
             source_match_id=match.schedule_id,
             source_page_url=match.europe_odds_url,
             source_js_url=oddslist_js_url,
@@ -390,6 +415,11 @@ def append_match_rows(sheet, rows: Iterable[MatchReportRow]) -> None:
                 row.confidence,
                 round(row.consensus, 4),
                 round(row.top_gap, 4),
+                row.final_action,
+                row.final_prediction,
+                row.decision_basis,
+                row.history_sample_size,
+                row.history_accuracy_summary,
                 row.source_match_id,
                 row.source_page_url,
                 row.source_js_url,
@@ -416,6 +446,50 @@ def append_league_section(
     sheet.append(detail_headers)
     style_header_row(sheet, header_row_index)
     append_match_rows(sheet, league_rows)
+
+
+def append_betting_decision_table_sheet(workbook: Workbook) -> None:
+    sheet = workbook.create_sheet("投注决策总表")
+    table_rows = get_betting_decision_table()
+    headers = [
+        "信任等级",
+        "结构标签",
+        "原始类型",
+        "前二差值范围",
+        "最终决策动作",
+        "最终预测结果规则",
+        "历史样本数",
+        "历史准确率1",
+        "历史准确率2",
+        "历史准确率3",
+        "规则说明",
+        "样本说明",
+    ]
+    sheet.append(headers)
+    style_header_row(sheet)
+    for row in table_rows:
+        sheet.append([row[header] for header in headers])
+    set_column_widths(
+        sheet,
+        {
+            1: 10,
+            2: 16,
+            3: 12,
+            4: 14,
+            5: 14,
+            6: 24,
+            7: 12,
+            8: 22,
+            9: 22,
+            10: 22,
+            11: 42,
+            12: 34,
+        },
+    )
+    sheet.freeze_panes = "A2"
+    for row_cells in sheet.iter_rows(min_row=2):
+        for cell in row_cells:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]], output_path: Path) -> None:
@@ -466,11 +540,16 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         "开赛时间（北京时间）",
         "主队",
         "客队",
-        "预测结果",
+        "原始预测结果",
         "结构标签",
         "信任等级",
         "市场共识",
         "前二差值",
+        "最终决策动作",
+        "最终预测结果",
+        "决策依据",
+        "历史样本数",
+        "历史准确率提示",
         "比赛ID",
         "欧赔页",
         "真实JS源",
@@ -510,17 +589,24 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
                 6: 10,
                 7: 10,
                 8: 10,
-                9: 12,
-                10: 40,
-                11: 36,
-                12: 60,
-                13: 42,
+                9: 14,
+                10: 14,
+                11: 28,
+                12: 12,
+                13: 36,
+                14: 12,
+                15: 40,
+                16: 36,
+                17: 60,
+                18: 42,
             },
         )
         sheet.freeze_panes = "A1"
         for row_cells in sheet.iter_rows(min_row=1):
             for cell in row_cells:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    append_betting_decision_table_sheet(workbook)
 
     audit_sheet = workbook.create_sheet("扫描备注")
     audit_sheet.append(["比赛ID", "状态", "详情"])
@@ -536,7 +622,9 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
 
     if not rows:
         notice_sheet = workbook.create_sheet("结果说明")
-        notice_sheet["A1"] = "本次按当前条件筛选后，没有命中高或中信任比赛。"
+        notice_sheet["A1"] = (
+            f"本次按当前条件筛选后，没有命中{format_confidence_scope()}信任比赛。"
+        )
         notice_sheet["A2"] = "你仍可在“扫描备注”Sheet 查看每场被排除的原因。"
         notice_sheet["A1"].font = Font(bold=True)
         notice_sheet["A1"].fill = section_fill()
@@ -565,7 +653,7 @@ def main() -> None:
     parser.add_argument(
         "--confidences",
         default="高,中",
-        help="输出的信任等级，逗号分隔，例如：高 或 高,中",
+        help="输出的信任等级，逗号分隔，例如：高、高,中、高,中,谨慎",
     )
     parser.add_argument(
         "--output",
@@ -584,6 +672,11 @@ def main() -> None:
         for item in args.confidences.split(",")
         if item.strip()
     }
+    invalid_confidences = sorted(ALLOWED_CONFIDENCES - VALID_CONFIDENCES)
+    if invalid_confidences:
+        raise ValueError(
+            f"不支持的信任等级: {', '.join(invalid_confidences)}；仅支持 {', '.join(sorted(VALID_CONFIDENCES))}。"
+        )
 
     rows, audit_rows = iter_report_rows()
     if args.output:
