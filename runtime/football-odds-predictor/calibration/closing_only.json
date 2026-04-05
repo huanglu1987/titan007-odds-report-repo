@@ -426,7 +426,7 @@
       "topProbabilityMin": 0.58,
       "topGapMin": 0.08,
       "consensusMin": 0.8,
-      "favoriteVoteShareMin": 1
+      "favoriteVoteShareMin": 0.83
     },
     "metrics": {
       "train": {

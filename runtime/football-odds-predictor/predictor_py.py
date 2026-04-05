@@ -29,6 +29,7 @@ MODE_SELECTION_DECISION_TYPE_LABELS = {
     "abstain": "放弃",
 }
 MODE_SELECTION_DEFAULT_MIN_SAMPLE = 30
+LIVE_HIGH_CONFIDENCE_FAVORITE_VOTE_CAP = 0.83
 
 _CALIBRATED_MODELS: dict[str, dict | None] = {}
 _LIVE_MODE_SELECTION: dict[tuple[str, str, str], dict] | None = None
@@ -1710,6 +1711,20 @@ def get_confidence_metrics_for_prediction(prediction: dict) -> tuple[dict | None
     return prediction.get("openingMetrics") or prediction.get("closingMetrics"), "初赔市场结构"
 
 
+def get_effective_high_confidence_policy(prediction: dict) -> dict | None:
+    policy = prediction.get("highConfidencePolicy")
+    if not policy:
+        return None
+
+    normalized = dict(policy)
+    if prediction.get("featureMode") in {"closing_only", "hybrid"}:
+        normalized["favoriteVoteShareMin"] = min(
+            normalized.get("favoriteVoteShareMin", LIVE_HIGH_CONFIDENCE_FAVORITE_VOTE_CAP),
+            LIVE_HIGH_CONFIDENCE_FAVORITE_VOTE_CAP,
+        )
+    return normalized
+
+
 def build_mode_aware_confidence(
     opening_prediction: dict,
     effective_prediction: dict,
@@ -1734,28 +1749,33 @@ def build_mode_aware_confidence(
             "confidenceBasis": "已开球但当前结果回退到规则层，最终信任等级按谨慎处理。",
         }
 
-    if selection_fallback == "sample_too_small" or not selection_row_found:
-        return {
-            "originalConfidence": original_confidence,
-            "finalConfidence": "谨慎",
-            "confidenceBasis": "已开球，但当前模式选择样本不足，最终信任等级按谨慎处理。",
-        }
-
     mode_label = effective_prediction.get("modeLabel", "当前模式")
+    selection_basis_note = ""
+    if selection_fallback == "sample_too_small":
+        selection_basis_note = "当前模式选择格子样本不足，仍按当前模式自身高置信门槛评估。"
+    elif not selection_row_found:
+        selection_basis_note = "未命中模式选择表，当前按默认模式自身高置信门槛评估。"
+
+    basis_prefix = f"已开球，{selection_basis_note}；" if selection_basis_note else "已开球，"
     if normalize_decision_type(effective_prediction["decision"]["type"]) != "single":
         return {
             "originalConfidence": original_confidence,
             "finalConfidence": "中",
-            "confidenceBasis": f"已开球，{mode_label}当前仍输出双选结果，不进入高信任单关池，最终信任等级记为中。",
+            "confidenceBasis": (
+                f"{basis_prefix}{mode_label}当前仍输出双选结果，不进入高信任单关池，"
+                "最终信任等级记为中。"
+            ),
         }
 
-    policy = effective_prediction.get("highConfidencePolicy")
+    policy = get_effective_high_confidence_policy(effective_prediction)
     metrics, metrics_label = get_confidence_metrics_for_prediction(effective_prediction)
     if not policy or not metrics:
         return {
             "originalConfidence": original_confidence,
             "finalConfidence": "中",
-            "confidenceBasis": f"已开球，{mode_label}缺少完整高置信门槛信息，最终信任等级记为中。",
+            "confidenceBasis": (
+                f"{basis_prefix}{mode_label}缺少完整高置信门槛信息，最终信任等级记为中。"
+            ),
         }
 
     checks = [
@@ -1775,7 +1795,7 @@ def build_mode_aware_confidence(
             "originalConfidence": original_confidence,
             "finalConfidence": "高",
             "confidenceBasis": (
-                f"已开球，{mode_label}满足高置信门槛，且当前为单选；"
+                f"{basis_prefix}{mode_label}满足高置信门槛，且当前为单选；"
                 f"{metrics_label}通过最高概率、前二差值、市场共识、最低赔一致度四项要求。"
             ),
         }
@@ -1784,7 +1804,7 @@ def build_mode_aware_confidence(
         "originalConfidence": original_confidence,
         "finalConfidence": "中",
         "confidenceBasis": (
-            f"已开球，{mode_label}未通过高置信门槛：{'；'.join(failed_checks)}；"
+            f"{basis_prefix}{mode_label}未通过高置信门槛：{'；'.join(failed_checks)}；"
             "因此最终信任等级记为中。"
         ),
     }
