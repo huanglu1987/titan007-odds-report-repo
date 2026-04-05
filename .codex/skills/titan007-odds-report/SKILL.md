@@ -17,6 +17,7 @@ description: "根据北京时间时间范围生成球探未来赛程欧赔预测
 可选项：
 
 - 信任等级：`高`、`高,中` 或 `高,中,谨慎`
+- 信任等级筛选口径：`opening` 或 `effective`
 - 输出路径；如果用户不指定，默认直接导出到 Mac 桌面
 
 ## 工作流程
@@ -35,7 +36,8 @@ description: "根据北京时间时间范围生成球探未来赛程欧赔预测
 python3 .codex/skills/titan007-odds-report/scripts/run_report.py \
   --start "2026-03-29 18:00" \
   --end "2026-04-03 00:00" \
-  --confidences "高,中,谨慎"
+  --confidences "高,中,谨慎" \
+  --confidence-source "opening"
 ```
 
 如果不在项目根目录，可以显式传 `--project-root`：
@@ -45,7 +47,8 @@ python3 /path/to/titan007-odds-report/scripts/run_report.py \
   --project-root "/path/to/your/repo" \
   --start "2026-03-29 18:00" \
   --end "2026-04-03 00:00" \
-  --confidences "高,中,谨慎"
+  --confidences "高,中,谨慎" \
+  --confidence-source "opening"
 ```
 
 如果 skill 作为仓库的一部分被提交，`run_report.py` 会先尝试使用当前工作目录；如果当前目录不是仓库根目录，它会再自动按自身所在位置向上推断项目根目录。
@@ -66,6 +69,9 @@ python3 /path/to/titan007-odds-report/scripts/run_report.py \
 
 - `原始预测结果`
 - `结构标签`
+- `原始信任等级`
+- `最终信任等级`
+- `信任等级依据`
 - `前二差值`
 - `比赛时点状态`
 - `生效预测模式`
@@ -76,6 +82,13 @@ python3 /path/to/titan007-odds-report/scripts/run_report.py \
 - `模式历史准确率`
 - `历史样本数`
 - `历史准确率提示`
+
+其中：
+
+- `原始信任等级`：按初赔规则模型分档
+- `最终信任等级`：按当前真正生效的预测模式重新判定
+- `--confidence-source opening`：按 `原始信任等级` 过滤，兼容旧行为
+- `--confidence-source effective`：按 `最终信任等级` 过滤，更适合观察“高信任是否真的更准”
 
 默认文件名会自动带上信任等级和时间范围，格式是：
 

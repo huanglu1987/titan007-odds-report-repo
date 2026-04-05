@@ -52,6 +52,11 @@ def main() -> None:
         help="信任等级，逗号分隔，例如：高、高,中、高,中,谨慎",
     )
     parser.add_argument(
+        "--confidence-source",
+        default="opening",
+        help="信任等级筛选口径：opening=按原始信任等级；effective=按最终信任等级。",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="输出 Excel 路径；不传则默认导出到桌面并自动命名。",
@@ -78,6 +83,8 @@ def main() -> None:
         args.end,
         "--confidences",
         args.confidences,
+        "--confidence-source",
+        args.confidence_source,
         "--output",
         str(output_path),
     ]

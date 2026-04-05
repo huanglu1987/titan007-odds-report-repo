@@ -51,6 +51,8 @@ LARGE_WINDOW_MATCH_THRESHOLD = 500
 LARGE_WINDOW_MAX_WORKERS = 24
 LARGE_WINDOW_RETRY_MAX_WORKERS = 8
 VALID_CONFIDENCES = {"高", "中", "谨慎"}
+VALID_CONFIDENCE_SOURCES = {"opening", "effective"}
+CONFIDENCE_SOURCE = "opening"
 
 
 @dataclass
@@ -73,7 +75,9 @@ class MatchReportRow:
     away_team: str
     recommendation: str
     structure_label: str
-    confidence: str
+    original_confidence: str
+    final_confidence: str
+    confidence_basis: str
     consensus: float
     top_gap: float
     phase_status: str
@@ -216,6 +220,10 @@ def format_kickoff_bjt(value: datetime) -> str:
 def format_confidence_scope() -> str:
     ordered = [label for label in ("高", "中", "谨慎") if label in ALLOWED_CONFIDENCES]
     return "或".join(ordered) if ordered else "未指定"
+
+
+def format_confidence_source_label() -> str:
+    return "最终信任等级" if CONFIDENCE_SOURCE == "effective" else "原始信任等级"
 
 
 def resolve_worker_counts(match_count: int) -> tuple[int, int]:
@@ -367,13 +375,22 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
         ]
 
     opening_prediction = prediction["openingPrediction"]
+    filter_confidence = (
+        prediction["finalConfidence"]
+        if CONFIDENCE_SOURCE == "effective"
+        else prediction["originalConfidence"]
+    )
 
-    if opening_prediction["confidence"] not in ALLOWED_CONFIDENCES:
+    if filter_confidence not in ALLOWED_CONFIDENCES:
         return None, [
             {
                 "schedule_id": match.schedule_id,
                 "status": "confidence_not_high",
-                "detail": opening_prediction["confidenceProfile"]["label"],
+                "detail": (
+                    f"筛选口径={format_confidence_source_label()}｜"
+                    f"原始={prediction['originalConfidence']}｜最终={prediction['finalConfidence']}｜"
+                    f"结构={opening_prediction['confidenceProfile']['label']}"
+                ),
             }
         ]
 
@@ -395,7 +412,9 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             away_team=match.away_team,
             recommendation=opening_prediction["recommendation"],
             structure_label=opening_prediction["confidenceProfile"]["label"],
-            confidence=opening_prediction["confidence"],
+            original_confidence=prediction["originalConfidence"],
+            final_confidence=prediction["finalConfidence"],
+            confidence_basis=prediction["confidenceBasis"],
             consensus=opening_prediction["metrics"]["consensus"],
             top_gap=opening_prediction["metrics"]["topGap"],
             phase_status=prediction["phaseStatus"],
@@ -453,7 +472,9 @@ def append_match_rows(sheet, rows: Iterable[MatchReportRow]) -> None:
                 row.away_team,
                 row.recommendation,
                 row.structure_label,
-                row.confidence,
+                row.original_confidence,
+                row.final_confidence,
+                row.confidence_basis,
                 round(row.consensus, 4),
                 round(row.top_gap, 4),
                 row.phase_status,
@@ -605,7 +626,7 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
     overview["A4"] = "赔率条件"
     overview["B4"] = "固定 6 家公司初赔齐全；若已到开球时间且临场赔率齐全，则在初赔/临场/初赔+临场三种模式中按保守约束自动择优。"
     overview["A5"] = "预测条件"
-    overview["B5"] = f"输出预测信任等级为{format_confidence_scope()}的比赛"
+    overview["B5"] = f"输出预测信任等级为{format_confidence_scope()}的比赛（按{format_confidence_source_label()}筛选）"
     overview["A6"] = "运行时点（北京时间）"
     overview["B6"] = format_kickoff_bjt(CURRENT_TIME_BJT)
 
@@ -656,7 +677,9 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         "客队",
         "原始预测结果",
         "结构标签",
-        "信任等级",
+        "原始信任等级",
+        "最终信任等级",
+        "信任等级依据",
         "市场共识",
         "前二差值",
         "比赛时点状态",
@@ -707,22 +730,24 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
                 5: 14,
                 6: 10,
                 7: 10,
-                8: 10,
-                9: 12,
-                10: 12,
-                11: 14,
-                12: 14,
-                13: 28,
-                14: 36,
-                15: 36,
-                16: 12,
+                8: 34,
+                9: 10,
+                10: 10,
+                11: 12,
+                12: 12,
+                13: 14,
+                14: 14,
+                15: 28,
+                16: 36,
                 17: 36,
                 18: 12,
-                19: 40,
-                20: 36,
-                21: 60,
-                22: 60,
-                23: 42,
+                19: 36,
+                20: 12,
+                21: 40,
+                22: 36,
+                23: 60,
+                24: 60,
+                25: 42,
             },
         )
         sheet.freeze_panes = "A1"
@@ -760,7 +785,7 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
 
 
 def main() -> None:
-    global WINDOW_START_BJT, WINDOW_END_BJT, FUTURE_SCHEDULE_DATES, ALLOWED_CONFIDENCES, CURRENT_TIME_BJT
+    global WINDOW_START_BJT, WINDOW_END_BJT, FUTURE_SCHEDULE_DATES, ALLOWED_CONFIDENCES, CURRENT_TIME_BJT, CONFIDENCE_SOURCE
 
     parser = argparse.ArgumentParser(
         description="根据北京时间范围抓取球探未来赛程，生成开球感知的欧赔预测 Excel。"
@@ -779,6 +804,11 @@ def main() -> None:
         "--confidences",
         default="高,中",
         help="输出的信任等级，逗号分隔，例如：高、高,中、高,中,谨慎",
+    )
+    parser.add_argument(
+        "--confidence-source",
+        default="opening",
+        help="信任等级筛选口径：opening=按原始信任等级；effective=按最终信任等级。",
     )
     parser.add_argument(
         "--now",
@@ -810,6 +840,11 @@ def main() -> None:
     if invalid_confidences:
         raise ValueError(
             f"不支持的信任等级: {', '.join(invalid_confidences)}；仅支持 {', '.join(sorted(VALID_CONFIDENCES))}。"
+        )
+    CONFIDENCE_SOURCE = args.confidence_source.strip()
+    if CONFIDENCE_SOURCE not in VALID_CONFIDENCE_SOURCES:
+        raise ValueError(
+            f"不支持的 confidence-source: {CONFIDENCE_SOURCE}；仅支持 {', '.join(sorted(VALID_CONFIDENCE_SOURCES))}。"
         )
 
     rows, audit_rows = iter_report_rows()

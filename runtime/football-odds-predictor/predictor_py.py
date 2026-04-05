@@ -1703,6 +1703,93 @@ def build_calibrated_history_summary(
     return "｜".join(parts)
 
 
+def get_confidence_metrics_for_prediction(prediction: dict) -> tuple[dict | None, str]:
+    feature_mode = prediction.get("featureMode")
+    if feature_mode == "closing_only":
+        return prediction.get("closingMetrics"), "临场市场结构"
+    return prediction.get("openingMetrics") or prediction.get("closingMetrics"), "初赔市场结构"
+
+
+def build_mode_aware_confidence(
+    opening_prediction: dict,
+    effective_prediction: dict,
+    *,
+    match_started: bool,
+    selection_fallback: str | None = None,
+    selection_row_found: bool = True,
+) -> dict[str, str]:
+    original_confidence = opening_prediction["confidence"]
+
+    if not match_started:
+        return {
+            "originalConfidence": original_confidence,
+            "finalConfidence": original_confidence,
+            "confidenceBasis": "未到开球时间，最终信任等级沿用初赔规则信任等级。",
+        }
+
+    if effective_prediction.get("engine") != "supervised":
+        return {
+            "originalConfidence": original_confidence,
+            "finalConfidence": "谨慎",
+            "confidenceBasis": "已开球但当前结果回退到规则层，最终信任等级按谨慎处理。",
+        }
+
+    if selection_fallback == "sample_too_small" or not selection_row_found:
+        return {
+            "originalConfidence": original_confidence,
+            "finalConfidence": "谨慎",
+            "confidenceBasis": "已开球，但当前模式选择样本不足，最终信任等级按谨慎处理。",
+        }
+
+    mode_label = effective_prediction.get("modeLabel", "当前模式")
+    if normalize_decision_type(effective_prediction["decision"]["type"]) != "single":
+        return {
+            "originalConfidence": original_confidence,
+            "finalConfidence": "中",
+            "confidenceBasis": f"已开球，{mode_label}当前仍输出双选结果，不进入高信任单关池，最终信任等级记为中。",
+        }
+
+    policy = effective_prediction.get("highConfidencePolicy")
+    metrics, metrics_label = get_confidence_metrics_for_prediction(effective_prediction)
+    if not policy or not metrics:
+        return {
+            "originalConfidence": original_confidence,
+            "finalConfidence": "中",
+            "confidenceBasis": f"已开球，{mode_label}缺少完整高置信门槛信息，最终信任等级记为中。",
+        }
+
+    checks = [
+        ("最高概率", effective_prediction["topProbability"], policy["topProbabilityMin"]),
+        ("前二差值", effective_prediction["topGap"], policy["topGapMin"]),
+        ("市场共识", metrics["consensus"], policy["consensusMin"]),
+        ("最低赔一致度", metrics["favoriteVoteShare"], policy["favoriteVoteShareMin"]),
+    ]
+    failed_checks = [
+        f"{label}{format_percentage(actual)} < {format_percentage(threshold)}"
+        for label, actual, threshold in checks
+        if actual < threshold
+    ]
+
+    if not failed_checks:
+        return {
+            "originalConfidence": original_confidence,
+            "finalConfidence": "高",
+            "confidenceBasis": (
+                f"已开球，{mode_label}满足高置信门槛，且当前为单选；"
+                f"{metrics_label}通过最高概率、前二差值、市场共识、最低赔一致度四项要求。"
+            ),
+        }
+
+    return {
+        "originalConfidence": original_confidence,
+        "finalConfidence": "中",
+        "confidenceBasis": (
+            f"已开球，{mode_label}未通过高置信门槛：{'；'.join(failed_checks)}；"
+            "因此最终信任等级记为中。"
+        ),
+    }
+
+
 def predict_calibrated_probabilities(vector: list[float], supervised_model: dict) -> dict[str, float]:
     means = supervised_model["normalization"]["means"]
     scales = supervised_model["normalization"]["scales"]
@@ -1821,6 +1908,11 @@ def compute_report_prediction(
     key_label = format_mode_selection_key_parts(key_parts)
 
     if not match_started:
+        confidence_info = build_mode_aware_confidence(
+            opening_prediction,
+            opening_prediction,
+            match_started=False,
+        )
         return {
             "openingPrediction": opening_prediction,
             "effectiveMode": "opening_only",
@@ -1833,10 +1925,19 @@ def compute_report_prediction(
             "finalAction": opening_prediction["bettingDecision"]["action"],
             "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
             "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
+            "originalConfidence": confidence_info["originalConfidence"],
+            "finalConfidence": confidence_info["finalConfidence"],
+            "confidenceBasis": confidence_info["confidenceBasis"],
             "effectivePrediction": opening_prediction,
         }
 
     if not closing_rows:
+        confidence_info = build_mode_aware_confidence(
+            opening_prediction,
+            opening_prediction,
+            match_started=True,
+            selection_row_found=False,
+        )
         return {
             "openingPrediction": opening_prediction,
             "effectiveMode": "opening_only",
@@ -1849,6 +1950,9 @@ def compute_report_prediction(
             "finalAction": opening_prediction["bettingDecision"]["action"],
             "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
             "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
+            "originalConfidence": confidence_info["originalConfidence"],
+            "finalConfidence": confidence_info["finalConfidence"],
+            "confidenceBasis": confidence_info["confidenceBasis"],
             "effectivePrediction": opening_prediction,
         }
 
@@ -1888,6 +1992,12 @@ def compute_report_prediction(
                 break
         else:
             fallback_reason = "；".join(live_errors) if live_errors else "临场增强模式均不可用。"
+            confidence_info = build_mode_aware_confidence(
+                opening_prediction,
+                opening_prediction,
+                match_started=True,
+                selection_row_found=False,
+            )
             return {
                 "openingPrediction": opening_prediction,
                 "effectiveMode": "opening_only",
@@ -1900,10 +2010,20 @@ def compute_report_prediction(
                 "finalAction": opening_prediction["bettingDecision"]["action"],
                 "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
                 "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
+                "originalConfidence": confidence_info["originalConfidence"],
+                "finalConfidence": confidence_info["finalConfidence"],
+                "confidenceBasis": confidence_info["confidenceBasis"],
                 "effectivePrediction": opening_prediction,
             }
 
     selected_prediction = live_predictions[preferred_mode]
+    confidence_info = build_mode_aware_confidence(
+        opening_prediction,
+        selected_prediction,
+        match_started=True,
+        selection_fallback=live_selection_row.get("fallback") if live_selection_row else None,
+        selection_row_found=live_selection_row is not None,
+    )
     decision_type = normalize_decision_type(selected_prediction["decision"]["type"])
     if live_selection_row:
         history_summary = build_calibrated_history_summary(
@@ -1935,5 +2055,8 @@ def compute_report_prediction(
         "finalAction": final_action,
         "finalPrediction": selected_prediction["prediction"],
         "decisionBasis": key_label,
+        "originalConfidence": confidence_info["originalConfidence"],
+        "finalConfidence": confidence_info["finalConfidence"],
+        "confidenceBasis": confidence_info["confidenceBasis"],
         "effectivePrediction": selected_prediction,
     }
