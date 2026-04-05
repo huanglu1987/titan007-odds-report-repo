@@ -31,8 +31,9 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from predictor_py import (  # noqa: E402
     FIXED_COMPANIES,
-    compute_rule_prediction,
+    compute_report_prediction,
     get_betting_decision_table,
+    get_live_mode_selection_table,
 )
 
 
@@ -40,6 +41,7 @@ OUTPUT_DIR = ROOT_DIR / "output" / "spreadsheet"
 TIMEZONE_BEIJING = ZoneInfo("Asia/Shanghai")
 WINDOW_START_BJT = datetime(2026, 3, 29, 18, 0, tzinfo=TIMEZONE_BEIJING)
 WINDOW_END_BJT = datetime(2026, 4, 3, 0, 0, tzinfo=TIMEZONE_BEIJING)
+CURRENT_TIME_BJT = datetime.now(TIMEZONE_BEIJING)
 FUTURE_SCHEDULE_DATES = ["20260329", "20260330", "20260331", "20260401", "20260402"]
 FUTURE_SCHEDULE_URL_TEMPLATE = "https://bf.titan007.com/football/Next_{date}.htm"
 INITIAL_MAX_WORKERS = 8
@@ -74,15 +76,20 @@ class MatchReportRow:
     confidence: str
     consensus: float
     top_gap: float
+    phase_status: str
+    effective_mode: str
     final_action: str
     final_prediction: str
     decision_basis: str
+    mode_selection_basis: str
+    mode_history_accuracy: str
     history_sample_size: str
     history_accuracy_summary: str
     source_match_id: str
     source_page_url: str
     source_js_url: str
     opening_odds_json: str
+    closing_odds_json: str
     explanation: str
 
 
@@ -327,9 +334,29 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
         }
         for item in plugin_rows
     ]
+    closing_rows = []
+    closing_available = True
+    for item in plugin_rows:
+        closing_odds = item.get("closingOdds")
+        if not closing_odds:
+            closing_available = False
+            break
+        closing_rows.append(
+            {
+                "home": closing_odds["home"],
+                "draw": closing_odds["draw"],
+                "away": closing_odds["away"],
+            }
+        )
+    if not closing_available:
+        closing_rows = None
 
     try:
-        prediction = compute_rule_prediction(opening_rows)
+        prediction = compute_report_prediction(
+            opening_rows,
+            closing_rows,
+            match_started=CURRENT_TIME_BJT >= match.kickoff_bjt,
+        )
     except Exception as error:  # noqa: BLE001
         return None, [
             {
@@ -339,12 +366,14 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             }
         ]
 
-    if prediction["confidence"] not in ALLOWED_CONFIDENCES:
+    opening_prediction = prediction["openingPrediction"]
+
+    if opening_prediction["confidence"] not in ALLOWED_CONFIDENCES:
         return None, [
             {
                 "schedule_id": match.schedule_id,
                 "status": "confidence_not_high",
-                "detail": prediction["confidenceProfile"]["label"],
+                "detail": opening_prediction["confidenceProfile"]["label"],
             }
         ]
 
@@ -364,16 +393,20 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             kickoff_text=format_kickoff_bjt(match.kickoff_bjt),
             home_team=match.home_team,
             away_team=match.away_team,
-            recommendation=prediction["recommendation"],
-            structure_label=prediction["confidenceProfile"]["label"],
-            confidence=prediction["confidence"],
-            consensus=prediction["metrics"]["consensus"],
-            top_gap=prediction["metrics"]["topGap"],
-            final_action=prediction["bettingDecision"]["action"],
-            final_prediction=prediction["bettingDecision"]["finalPrediction"],
-            decision_basis=prediction["bettingDecision"]["decisionBasis"],
-            history_sample_size=prediction["bettingDecision"]["historySampleSize"],
-            history_accuracy_summary=prediction["bettingDecision"]["historyAccuracySummary"],
+            recommendation=opening_prediction["recommendation"],
+            structure_label=opening_prediction["confidenceProfile"]["label"],
+            confidence=opening_prediction["confidence"],
+            consensus=opening_prediction["metrics"]["consensus"],
+            top_gap=opening_prediction["metrics"]["topGap"],
+            phase_status=prediction["phaseStatus"],
+            effective_mode=prediction["effectiveModeLabel"],
+            final_action=prediction["finalAction"],
+            final_prediction=prediction["finalPrediction"],
+            decision_basis=prediction["decisionBasis"],
+            mode_selection_basis=prediction["modeSelectionBasis"],
+            mode_history_accuracy=prediction["modeHistoryAccuracy"],
+            history_sample_size=prediction["historySampleSize"],
+            history_accuracy_summary=prediction["historyAccuracySummary"],
             source_match_id=match.schedule_id,
             source_page_url=match.europe_odds_url,
             source_js_url=oddslist_js_url,
@@ -384,7 +417,15 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
                 },
                 ensure_ascii=False,
             ),
-            explanation=prediction["explanation"],
+            closing_odds_json=json.dumps(
+                {
+                    item["company"]: item["closingOdds"]
+                    for item in plugin_rows
+                    if item.get("closingOdds")
+                },
+                ensure_ascii=False,
+            ),
+            explanation=opening_prediction["explanation"],
         ),
         audit_rows,
     )
@@ -415,15 +456,20 @@ def append_match_rows(sheet, rows: Iterable[MatchReportRow]) -> None:
                 row.confidence,
                 round(row.consensus, 4),
                 round(row.top_gap, 4),
+                row.phase_status,
+                row.effective_mode,
                 row.final_action,
                 row.final_prediction,
                 row.decision_basis,
+                row.mode_selection_basis,
+                row.mode_history_accuracy,
                 row.history_sample_size,
                 row.history_accuracy_summary,
                 row.source_match_id,
                 row.source_page_url,
                 row.source_js_url,
                 row.opening_odds_json,
+                row.closing_odds_json,
                 row.explanation,
             ]
         )
@@ -492,6 +538,56 @@ def append_betting_decision_table_sheet(workbook: Workbook) -> None:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
+def append_live_mode_selection_sheet(workbook: Workbook) -> None:
+    sheet = workbook.create_sheet("临场模式选择表")
+    table_rows = get_live_mode_selection_table()
+    headers = [
+        "结构标签",
+        "前二差值范围",
+        "基础决策类型",
+        "推荐模式",
+        "历史样本数",
+        "初赔Top1",
+        "初赔单选准确率",
+        "初赔覆盖率",
+        "临场Top1",
+        "临场单选准确率",
+        "临场覆盖率",
+        "混合Top1",
+        "混合单选准确率",
+        "混合覆盖率",
+        "推荐依据",
+    ]
+    sheet.append(headers)
+    style_header_row(sheet)
+    for row in table_rows:
+        sheet.append([row[header] for header in headers])
+    set_column_widths(
+        sheet,
+        {
+            1: 16,
+            2: 14,
+            3: 12,
+            4: 12,
+            5: 12,
+            6: 12,
+            7: 16,
+            8: 14,
+            9: 12,
+            10: 16,
+            11: 14,
+            12: 12,
+            13: 16,
+            14: 14,
+            15: 42,
+        },
+    )
+    sheet.freeze_panes = "A2"
+    for row_cells in sheet.iter_rows(min_row=2):
+        for cell in row_cells:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+
 def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]], output_path: Path) -> None:
     workbook = Workbook()
     overview = workbook.active
@@ -507,24 +603,42 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         f"Next_{FUTURE_SCHEDULE_DATES[-1]} 的足球比赛"
     )
     overview["A4"] = "赔率条件"
-    overview["B4"] = "仅保留 Bet365、William Hill、Bwin、Interwetten、Pinnacle、BetVictor 六家公司初赔齐全的场次"
+    overview["B4"] = "固定 6 家公司初赔齐全；若已到开球时间且临场赔率齐全，则在初赔/临场/初赔+临场三种模式中按保守约束自动择优。"
     overview["A5"] = "预测条件"
     overview["B5"] = f"输出预测信任等级为{format_confidence_scope()}的比赛"
+    overview["A6"] = "运行时点（北京时间）"
+    overview["B6"] = format_kickoff_bjt(CURRENT_TIME_BJT)
+
+    phase_counts = {"未开赛": 0, "已开球": 0}
+    mode_counts = {"初赔": 0, "临场": 0, "初赔+临场": 0}
+    for row in rows:
+        phase_counts[row.phase_status] = phase_counts.get(row.phase_status, 0) + 1
+        mode_counts[row.effective_mode] = mode_counts.get(row.effective_mode, 0) + 1
 
     overview["A7"] = f"{format_confidence_scope()}信任比赛数"
     overview["B7"] = len(rows)
-    overview["A8"] = "扫描备注数"
-    overview["B8"] = len(audit_rows)
+    overview["A8"] = "未开赛场次"
+    overview["B8"] = phase_counts.get("未开赛", 0)
+    overview["A9"] = "已开球场次"
+    overview["B9"] = phase_counts.get("已开球", 0)
+    overview["A10"] = "初赔模式生效场次"
+    overview["B10"] = mode_counts.get("初赔", 0)
+    overview["A11"] = "临场模式生效场次"
+    overview["B11"] = mode_counts.get("临场", 0)
+    overview["A12"] = "初赔+临场模式生效场次"
+    overview["B12"] = mode_counts.get("初赔+临场", 0)
+    overview["A13"] = "扫描备注数"
+    overview["B13"] = len(audit_rows)
 
-    overview["A10"] = "联赛"
-    overview["B10"] = "场次"
-    style_header_row(overview, 10)
+    overview["A15"] = "联赛"
+    overview["B15"] = "场次"
+    style_header_row(overview, 15)
 
     league_counts: dict[str, int] = {}
     for row in rows:
         league_counts[row.league] = league_counts.get(row.league, 0) + 1
 
-    current_row = 11
+    current_row = 16
     for league, count in sorted(league_counts.items()):
         overview.cell(current_row, 1, league)
         overview.cell(current_row, 2, count)
@@ -545,15 +659,20 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         "信任等级",
         "市场共识",
         "前二差值",
+        "比赛时点状态",
+        "生效预测模式",
         "最终决策动作",
         "最终预测结果",
         "决策依据",
+        "模式选择依据",
+        "模式历史准确率",
         "历史样本数",
         "历史准确率提示",
         "比赛ID",
         "欧赔页",
         "真实JS源",
         "六家公司初赔",
+        "六家公司临场赔率",
         "说明",
     ]
 
@@ -589,16 +708,21 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
                 6: 10,
                 7: 10,
                 8: 10,
-                9: 14,
-                10: 14,
-                11: 28,
-                12: 12,
-                13: 36,
-                14: 12,
-                15: 40,
-                16: 36,
-                17: 60,
-                18: 42,
+                9: 12,
+                10: 12,
+                11: 14,
+                12: 14,
+                13: 28,
+                14: 36,
+                15: 36,
+                16: 12,
+                17: 36,
+                18: 12,
+                19: 40,
+                20: 36,
+                21: 60,
+                22: 60,
+                23: 42,
             },
         )
         sheet.freeze_panes = "A1"
@@ -607,6 +731,7 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
 
     append_betting_decision_table_sheet(workbook)
+    append_live_mode_selection_sheet(workbook)
 
     audit_sheet = workbook.create_sheet("扫描备注")
     audit_sheet.append(["比赛ID", "状态", "详情"])
@@ -635,10 +760,10 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
 
 
 def main() -> None:
-    global WINDOW_START_BJT, WINDOW_END_BJT, FUTURE_SCHEDULE_DATES, ALLOWED_CONFIDENCES
+    global WINDOW_START_BJT, WINDOW_END_BJT, FUTURE_SCHEDULE_DATES, ALLOWED_CONFIDENCES, CURRENT_TIME_BJT
 
     parser = argparse.ArgumentParser(
-        description="根据北京时间范围抓取球探未来赛程，生成高/中信任欧赔预测 Excel。"
+        description="根据北京时间范围抓取球探未来赛程，生成开球感知的欧赔预测 Excel。"
     )
     parser.add_argument(
         "--start",
@@ -656,6 +781,10 @@ def main() -> None:
         help="输出的信任等级，逗号分隔，例如：高、高,中、高,中,谨慎",
     )
     parser.add_argument(
+        "--now",
+        help="运行时点，格式：YYYY-MM-DD HH:MM，按北京时间解释；不传则使用当前北京时间。",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="输出 Excel 路径；不传则按时间范围自动命名。",
@@ -667,6 +796,11 @@ def main() -> None:
     if WINDOW_END_BJT < WINDOW_START_BJT:
         raise ValueError("结束时间不能早于开始时间。")
     FUTURE_SCHEDULE_DATES = build_future_schedule_dates(WINDOW_START_BJT, WINDOW_END_BJT)
+    CURRENT_TIME_BJT = (
+        parse_datetime_bjt(args.now)
+        if args.now
+        else datetime.now(TIMEZONE_BEIJING)
+    )
     ALLOWED_CONFIDENCES = {
         item.strip()
         for item in args.confidences.split(",")

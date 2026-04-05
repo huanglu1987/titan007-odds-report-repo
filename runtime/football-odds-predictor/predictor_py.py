@@ -7,6 +7,32 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 CALIBRATION_PATH = ROOT_DIR / "calibration" / "latest.json"
+OPENING_ONLY_CALIBRATION_PATH = ROOT_DIR / "calibration" / "opening_only.json"
+HYBRID_CALIBRATION_PATH = ROOT_DIR / "calibration" / "hybrid.json"
+CLOSING_ONLY_CALIBRATION_PATH = ROOT_DIR / "calibration" / "closing_only.json"
+LIVE_MODE_SELECTION_PATH = ROOT_DIR / "calibration" / "live-mode-selection.json"
+
+CLASS_ORDER = ["H", "D", "A"]
+CALIBRATED_MODE_LABELS = {
+    "opening_only": "初赔",
+    "closing_only": "临场",
+    "hybrid": "初赔+临场",
+}
+CALIBRATED_ENGINE_LABELS = {
+    "opening_only": "初赔监督学习模型",
+    "closing_only": "临场监督学习模型",
+    "hybrid": "初赔+临场监督学习模型",
+}
+MODE_SELECTION_DECISION_TYPE_LABELS = {
+    "single": "单选",
+    "double": "双选",
+    "abstain": "放弃",
+}
+MODE_SELECTION_DEFAULT_MIN_SAMPLE = 30
+
+_CALIBRATED_MODELS: dict[str, dict | None] = {}
+_LIVE_MODE_SELECTION: dict[tuple[str, str, str], dict] | None = None
+_LIVE_MODE_SELECTION_META: dict | None = None
 
 FIXED_COMPANIES = [
     "Bet365",
@@ -21,6 +47,11 @@ OUTCOME_LABELS = {
     "home": "主胜",
     "draw": "平局",
     "away": "客胜",
+}
+OUTCOME_MAP = {
+    "H": "home",
+    "D": "draw",
+    "A": "away",
 }
 
 DECISION_TYPE_LABELS = {
@@ -529,6 +560,63 @@ def load_thresholds() -> dict:
 THRESHOLDS = load_thresholds()
 
 
+def load_json_file(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def get_calibration_model_data(feature_mode: str) -> dict | None:
+    cached = _CALIBRATED_MODELS.get(feature_mode)
+    if cached is not None or feature_mode in _CALIBRATED_MODELS:
+        return cached
+
+    if feature_mode == "closing_only":
+        payload = load_json_file(CLOSING_ONLY_CALIBRATION_PATH)
+    elif feature_mode == "opening_only":
+        payload = load_json_file(OPENING_ONLY_CALIBRATION_PATH)
+    elif feature_mode == "hybrid":
+        payload = load_json_file(HYBRID_CALIBRATION_PATH) or load_json_file(CALIBRATION_PATH)
+    else:
+        payload = None
+
+    if not payload or "supervisedModel" not in payload:
+        _CALIBRATED_MODELS[feature_mode] = None
+        return None
+
+    _CALIBRATED_MODELS[feature_mode] = payload
+    return payload
+
+
+def load_live_mode_selection() -> tuple[dict[tuple[str, str, str], dict], dict]:
+    global _LIVE_MODE_SELECTION, _LIVE_MODE_SELECTION_META
+
+    if _LIVE_MODE_SELECTION is not None and _LIVE_MODE_SELECTION_META is not None:
+        return _LIVE_MODE_SELECTION, _LIVE_MODE_SELECTION_META
+
+    payload = load_json_file(LIVE_MODE_SELECTION_PATH) or {}
+    rows = payload.get("rows", [])
+    selection_index: dict[tuple[str, str, str], dict] = {}
+    for row in rows:
+        key = (
+            row.get("structure", ""),
+            row.get("topGapBucket", ""),
+            row.get("decisionType", ""),
+        )
+        if all(key):
+            selection_index[key] = row
+
+    _LIVE_MODE_SELECTION = selection_index
+    _LIVE_MODE_SELECTION_META = {
+        "generatedAt": payload.get("generatedAt"),
+        "minSample": payload.get("minSample", MODE_SELECTION_DEFAULT_MIN_SAMPLE),
+        "source": payload.get("source"),
+        "rows": rows,
+    }
+    return _LIVE_MODE_SELECTION, _LIVE_MODE_SELECTION_META
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -568,6 +656,239 @@ def distance(left: dict[str, float], right: dict[str, float]) -> float:
         + (left["draw"] - right["draw"]) ** 2
         + (left["away"] - right["away"]) ** 2
     )
+
+
+def round_metric(value: float) -> float:
+    return round(value, 4)
+
+
+def softmax(values: list[float]) -> list[float]:
+    max_value = max(values)
+    exponents = [math.exp(value - max_value) for value in values]
+    total = sum(exponents)
+    return [value / total for value in exponents]
+
+
+def build_market_summary(rows: list[dict]) -> dict:
+    probability_rows = [to_probability_row(row["home"], row["draw"], row["away"]) for row in rows]
+    lowest_votes = {"home": 0, "draw": 0, "away": 0}
+
+    for row in rows:
+        ordered = sorted(
+            [
+                {"key": "home", "odds": row["home"]},
+                {"key": "draw", "odds": row["draw"]},
+                {"key": "away", "odds": row["away"]},
+            ],
+            key=lambda item: item["odds"],
+        )
+        lowest_votes[ordered[0]["key"]] += 1
+
+    mean_prob = {
+        "home": average([row["home"] for row in probability_rows]),
+        "draw": average([row["draw"] for row in probability_rows]),
+        "away": average([row["away"] for row in probability_rows]),
+    }
+    std_prob = {
+        "home": standard_deviation([row["home"] for row in probability_rows]),
+        "draw": standard_deviation([row["draw"] for row in probability_rows]),
+        "away": standard_deviation([row["away"] for row in probability_rows]),
+    }
+    range_prob = {
+        "home": max(row["home"] for row in probability_rows) - min(row["home"] for row in probability_rows),
+        "draw": max(row["draw"] for row in probability_rows) - min(row["draw"] for row in probability_rows),
+        "away": max(row["away"] for row in probability_rows) - min(row["away"] for row in probability_rows),
+    }
+
+    distances = [distance(row, mean_prob) for row in probability_rows]
+    mean_distance = average(distances)
+    std_distance = standard_deviation(distances)
+    outlier_cutoff = max(0.045, mean_distance + std_distance)
+    outlier_share = len([value for value in distances if value > outlier_cutoff]) / len(rows)
+    consensus = clamp(1 - mean_distance / 0.09, 0, 1)
+    dispersion = average([std_prob["home"], std_prob["draw"], std_prob["away"]])
+
+    ranked = sorted(
+        [
+            {"key": "home", "value": mean_prob["home"]},
+            {"key": "draw", "value": mean_prob["draw"]},
+            {"key": "away", "value": mean_prob["away"]},
+        ],
+        key=lambda item: item["value"],
+        reverse=True,
+    )
+    top_prob = ranked[0]["value"]
+    second_prob = ranked[1]["value"]
+    top_gap = top_prob - second_prob
+    home_away_gap = abs(mean_prob["home"] - mean_prob["away"])
+    skew_signed = mean_prob["home"] - mean_prob["away"]
+    draw_vs_side = mean_prob["draw"] - max(mean_prob["home"], mean_prob["away"])
+    overround_mean = average([1 / row["home"] + 1 / row["draw"] + 1 / row["away"] for row in rows])
+
+    return {
+        "probabilityRows": probability_rows,
+        "metrics": {
+            "meanProb": mean_prob,
+            "stdProb": std_prob,
+            "rangeProb": range_prob,
+            "consensus": consensus,
+            "outlierShare": outlier_share,
+            "dispersion": dispersion,
+            "favoriteVoteShare": max(lowest_votes.values()) / len(rows),
+            "homeVoteShare": lowest_votes["home"] / len(rows),
+            "drawVoteShare": lowest_votes["draw"] / len(rows),
+            "awayVoteShare": lowest_votes["away"] / len(rows),
+            "topGap": top_gap,
+            "homeAwayGap": home_away_gap,
+            "topProb": top_prob,
+            "secondProb": second_prob,
+            "skewSigned": skew_signed,
+            "drawVsSide": draw_vs_side,
+            "overroundMean": overround_mean,
+        },
+    }
+
+
+def build_phase_feature_vector(summary: dict) -> list[float]:
+    metrics = summary["metrics"]
+    return [
+        *[value for row in summary["probabilityRows"] for value in (row["home"], row["draw"], row["away"])],
+        metrics["meanProb"]["home"],
+        metrics["meanProb"]["draw"],
+        metrics["meanProb"]["away"],
+        metrics["stdProb"]["home"],
+        metrics["stdProb"]["draw"],
+        metrics["stdProb"]["away"],
+        metrics["rangeProb"]["home"],
+        metrics["rangeProb"]["draw"],
+        metrics["rangeProb"]["away"],
+        metrics["homeVoteShare"],
+        metrics["drawVoteShare"],
+        metrics["awayVoteShare"],
+        metrics["topProb"],
+        metrics["secondProb"],
+        metrics["topGap"],
+        metrics["homeAwayGap"],
+        metrics["skewSigned"],
+        metrics["drawVsSide"],
+        metrics["consensus"],
+        metrics["outlierShare"],
+        metrics["dispersion"],
+        metrics["overroundMean"],
+    ]
+
+
+def build_polynomial_vector(metrics: dict) -> list[float]:
+    return [
+        metrics["meanProb"]["home"] * metrics["meanProb"]["draw"],
+        metrics["meanProb"]["home"] * metrics["meanProb"]["away"],
+        metrics["meanProb"]["draw"] * metrics["meanProb"]["away"],
+        metrics["topGap"] * metrics["topGap"],
+        metrics["skewSigned"] * metrics["skewSigned"],
+        metrics["drawVsSide"] * metrics["drawVsSide"],
+    ]
+
+
+def build_calibrated_feature_vector(
+    opening_rows: list[dict] | None,
+    closing_rows: list[dict] | None,
+    feature_mode: str,
+) -> tuple[list[float], dict | None, dict | None]:
+    opening_summary = build_market_summary(opening_rows) if opening_rows else None
+    closing_summary = build_market_summary(closing_rows) if closing_rows else None
+
+    if feature_mode == "opening_only":
+        if opening_summary is None:
+            raise ValueError("初赔模式缺少 opening rows。")
+        return (
+            build_phase_feature_vector(opening_summary)
+            + build_polynomial_vector(opening_summary["metrics"]),
+            opening_summary,
+            closing_summary,
+        )
+
+    if feature_mode == "closing_only":
+        if closing_summary is None:
+            raise ValueError("临场模式缺少 closing rows。")
+        return (
+            build_phase_feature_vector(closing_summary)
+            + build_polynomial_vector(closing_summary["metrics"]),
+            opening_summary,
+            closing_summary,
+        )
+
+    if feature_mode == "hybrid":
+        if opening_summary is None or closing_summary is None:
+            raise ValueError("初赔+临场模式需要同时提供 opening rows 和 closing rows。")
+
+        delta_mean = {
+            "home": closing_summary["metrics"]["meanProb"]["home"] - opening_summary["metrics"]["meanProb"]["home"],
+            "draw": closing_summary["metrics"]["meanProb"]["draw"] - opening_summary["metrics"]["meanProb"]["draw"],
+            "away": closing_summary["metrics"]["meanProb"]["away"] - opening_summary["metrics"]["meanProb"]["away"],
+        }
+        delta_abs_mean = {
+            "home": average(
+                [
+                    abs(closing_summary["probabilityRows"][index]["home"] - row["home"])
+                    for index, row in enumerate(opening_summary["probabilityRows"])
+                ]
+            ),
+            "draw": average(
+                [
+                    abs(closing_summary["probabilityRows"][index]["draw"] - row["draw"])
+                    for index, row in enumerate(opening_summary["probabilityRows"])
+                ]
+            ),
+            "away": average(
+                [
+                    abs(closing_summary["probabilityRows"][index]["away"] - row["away"])
+                    for index, row in enumerate(opening_summary["probabilityRows"])
+                ]
+            ),
+        }
+        favorite_flip_share = sum(
+            1
+            for index, row in enumerate(opening_rows)
+            if sorted(
+                [
+                    ("home", row["home"]),
+                    ("draw", row["draw"]),
+                    ("away", row["away"]),
+                ],
+                key=lambda item: item[1],
+            )[0][0]
+            != sorted(
+                [
+                    ("home", closing_rows[index]["home"]),
+                    ("draw", closing_rows[index]["draw"]),
+                    ("away", closing_rows[index]["away"]),
+                ],
+                key=lambda item: item[1],
+            )[0][0]
+        ) / len(opening_rows)
+
+        vector = (
+            build_phase_feature_vector(opening_summary)
+            + build_phase_feature_vector(closing_summary)
+            + [
+                delta_mean["home"],
+                delta_mean["draw"],
+                delta_mean["away"],
+                delta_abs_mean["home"],
+                delta_abs_mean["draw"],
+                delta_abs_mean["away"],
+                favorite_flip_share,
+                closing_summary["metrics"]["topGap"] - opening_summary["metrics"]["topGap"],
+                closing_summary["metrics"]["skewSigned"] - opening_summary["metrics"]["skewSigned"],
+                closing_summary["metrics"]["drawVsSide"] - opening_summary["metrics"]["drawVsSide"],
+                closing_summary["metrics"]["consensus"] - opening_summary["metrics"]["consensus"],
+                closing_summary["metrics"]["overroundMean"] - opening_summary["metrics"]["overroundMean"],
+            ]
+            + build_polynomial_vector(opening_summary["metrics"])
+        )
+        return vector, opening_summary, closing_summary
+
+    raise ValueError(f"不支持的 feature_mode: {feature_mode}")
 
 
 def confidence_label(consensus: float, top_gap: float) -> str:
@@ -1316,4 +1637,303 @@ def compute_rule_prediction(rows: list[dict]) -> dict:
             decision,
             cold_profile,
         ),
+    }
+
+
+def bucket_live_mode_top_gap(top_gap: float) -> str:
+    if top_gap < 0.10:
+        return "0-0.10"
+    if top_gap < 0.20:
+        return "0.10-0.20"
+    if top_gap < 0.30:
+        return "0.20-0.30"
+    if top_gap < 0.40:
+        return "0.30-0.40"
+    if top_gap < 0.50:
+        return "0.40-0.50"
+    return "0.50以上"
+
+
+def build_mode_selection_key(rule_prediction: dict) -> dict[str, str]:
+    decision_type = normalize_decision_type(rule_prediction["decision"]["type"])
+    return {
+        "structure": rule_prediction["confidenceProfile"]["label"],
+        "topGapBucket": bucket_live_mode_top_gap(rule_prediction["metrics"]["topGap"]),
+        "decisionType": decision_type,
+    }
+
+
+def format_mode_selection_key_parts(key_parts: dict[str, str]) -> str:
+    return (
+        f"{key_parts['structure']}｜"
+        f"{MODE_SELECTION_DECISION_TYPE_LABELS[key_parts['decisionType']]}｜"
+        f"前二差值{key_parts['topGapBucket']}"
+    )
+
+
+def format_calibrated_prediction(decision: dict[str, str | None]) -> str:
+    primary = decision["primary"]
+    secondary = decision["secondary"]
+    if decision["type"] == "double" and secondary:
+        return f"{OUTCOME_LABELS[primary]}/{OUTCOME_LABELS[secondary]}"
+    return OUTCOME_LABELS[primary]
+
+
+def build_calibrated_history_summary(
+    selection_row: dict,
+    selected_mode: str,
+    decision_type: str,
+) -> str:
+    metrics_key = {
+        "opening_only": "openingOnly",
+        "closing_only": "closingOnly",
+        "hybrid": "hybrid",
+    }.get(selected_mode, "closingOnly")
+    metrics = selection_row[metrics_key]
+    samples = selection_row["matches"]
+    parts = [f"样本{samples}场"]
+    if decision_type == "single":
+        parts.append(f"单选准确率{format_percentage(metrics['singlePredictionAccuracy'])}")
+        parts.append(f"Top1{format_percentage(metrics['top1Accuracy'])}")
+        parts.append(f"覆盖率{format_percentage(metrics['inclusiveHitRate'])}")
+    else:
+        parts.append(f"覆盖率{format_percentage(metrics['inclusiveHitRate'])}")
+        parts.append(f"Top1{format_percentage(metrics['top1Accuracy'])}")
+        parts.append(f"单选准确率{format_percentage(metrics['singlePredictionAccuracy'])}")
+    return "｜".join(parts)
+
+
+def predict_calibrated_probabilities(vector: list[float], supervised_model: dict) -> dict[str, float]:
+    means = supervised_model["normalization"]["means"]
+    scales = supervised_model["normalization"]["scales"]
+    standardized = [
+        (value - means[index]) / scales[index] for index, value in enumerate(vector)
+    ]
+    logits: list[float] = []
+    for weights, bias in zip(supervised_model["weights"], supervised_model["biases"]):
+        logits.append(sum(weight * standardized[index] for index, weight in enumerate(weights)) + bias)
+    probabilities = softmax(logits)
+    return {
+        label: probability
+        for label, probability in zip(supervised_model["classOrder"], probabilities)
+    }
+
+
+def apply_calibrated_decision(probabilities: dict[str, float], decision_policy: dict) -> dict[str, str | None]:
+    ranked = sorted(
+        probabilities.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if ranked[0][1] - ranked[1][1] <= decision_policy["doubleGapThreshold"]:
+        return {
+            "type": "double",
+            "primary": OUTCOME_MAP[ranked[0][0]],
+            "secondary": OUTCOME_MAP[ranked[1][0]],
+        }
+    return {
+        "type": "single",
+        "primary": OUTCOME_MAP[ranked[0][0]],
+        "secondary": None,
+    }
+
+
+def compute_calibrated_prediction(
+    opening_rows: list[dict] | None,
+    closing_rows: list[dict] | None,
+    feature_mode: str,
+) -> dict:
+    payload = get_calibration_model_data(feature_mode)
+    if payload is None:
+        raise ValueError(f"{feature_mode} 校准模型不可用。")
+
+    supervised_model = payload["supervisedModel"]
+    vector, opening_summary, closing_summary = build_calibrated_feature_vector(
+        opening_rows,
+        closing_rows,
+        feature_mode,
+    )
+    probabilities = predict_calibrated_probabilities(vector, supervised_model)
+    decision = apply_calibrated_decision(probabilities, supervised_model["decisionPolicy"])
+    ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+    top_gap = ranked[0][1] - ranked[1][1]
+
+    return {
+        "featureMode": feature_mode,
+        "modeLabel": CALIBRATED_MODE_LABELS[feature_mode],
+        "engine": "supervised",
+        "engineLabel": CALIBRATED_ENGINE_LABELS[feature_mode],
+        "decision": decision,
+        "prediction": format_calibrated_prediction(decision),
+        "probabilities": probabilities,
+        "topProbability": ranked[0][1],
+        "topGap": top_gap,
+        "openingMetrics": opening_summary["metrics"] if opening_summary else None,
+        "closingMetrics": closing_summary["metrics"] if closing_summary else None,
+        "decisionPolicy": supervised_model["decisionPolicy"],
+        "highConfidencePolicy": supervised_model.get("highConfidencePolicy"),
+    }
+
+
+def resolve_live_mode_selection(rule_prediction: dict) -> tuple[dict | None, dict[str, str], dict]:
+    selection_index, meta = load_live_mode_selection()
+    key_parts = build_mode_selection_key(rule_prediction)
+    entry = selection_index.get(
+        (key_parts["structure"], key_parts["topGapBucket"], key_parts["decisionType"])
+    )
+    return entry, key_parts, meta
+
+
+def get_live_mode_selection_table() -> list[dict[str, str]]:
+    _, meta = load_live_mode_selection()
+    rows = []
+    for row in meta["rows"]:
+        rows.append(
+            {
+                "结构标签": row["structure"],
+                "前二差值范围": row["topGapBucket"],
+                "基础决策类型": MODE_SELECTION_DECISION_TYPE_LABELS.get(row["decisionType"], row["decisionType"]),
+                "推荐模式": CALIBRATED_MODE_LABELS.get(row["recommendedMode"], row["recommendedMode"]),
+                "历史样本数": str(row["matches"]),
+                "初赔Top1": format_percentage(row["openingOnly"]["top1Accuracy"]),
+                "初赔单选准确率": format_percentage(row["openingOnly"]["singlePredictionAccuracy"]),
+                "初赔覆盖率": format_percentage(row["openingOnly"]["inclusiveHitRate"]),
+                "临场Top1": format_percentage(row["closingOnly"]["top1Accuracy"]),
+                "临场单选准确率": format_percentage(row["closingOnly"]["singlePredictionAccuracy"]),
+                "临场覆盖率": format_percentage(row["closingOnly"]["inclusiveHitRate"]),
+                "混合Top1": format_percentage(row["hybrid"]["top1Accuracy"]),
+                "混合单选准确率": format_percentage(row["hybrid"]["singlePredictionAccuracy"]),
+                "混合覆盖率": format_percentage(row["hybrid"]["inclusiveHitRate"]),
+                "推荐依据": row["recommendationReason"],
+            }
+        )
+    return rows
+
+
+def compute_report_prediction(
+    opening_rows: list[dict],
+    closing_rows: list[dict] | None = None,
+    *,
+    match_started: bool = False,
+) -> dict:
+    opening_prediction = compute_rule_prediction(opening_rows)
+    key_parts = build_mode_selection_key(opening_prediction)
+    key_label = format_mode_selection_key_parts(key_parts)
+
+    if not match_started:
+        return {
+            "openingPrediction": opening_prediction,
+            "effectiveMode": "opening_only",
+            "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
+            "phaseStatus": "未开赛",
+            "modeSelectionBasis": "未到开球时间，默认使用初赔模式。",
+            "modeHistoryAccuracy": opening_prediction["bettingDecision"]["historyAccuracySummary"],
+            "historySampleSize": opening_prediction["bettingDecision"]["historySampleSize"],
+            "historyAccuracySummary": opening_prediction["bettingDecision"]["historyAccuracySummary"],
+            "finalAction": opening_prediction["bettingDecision"]["action"],
+            "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
+            "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
+            "effectivePrediction": opening_prediction,
+        }
+
+    if not closing_rows:
+        return {
+            "openingPrediction": opening_prediction,
+            "effectiveMode": "opening_only",
+            "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
+            "phaseStatus": "已开球",
+            "modeSelectionBasis": "已到开球时间，但临场赔率缺失，回退初赔模式。",
+            "modeHistoryAccuracy": opening_prediction["bettingDecision"]["historyAccuracySummary"],
+            "historySampleSize": opening_prediction["bettingDecision"]["historySampleSize"],
+            "historyAccuracySummary": opening_prediction["bettingDecision"]["historyAccuracySummary"],
+            "finalAction": opening_prediction["bettingDecision"]["action"],
+            "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
+            "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
+            "effectivePrediction": opening_prediction,
+        }
+
+    live_selection_row, _, live_meta = resolve_live_mode_selection(opening_prediction)
+    preferred_mode = "closing_only"
+    selection_reason = f"{key_label} → 未命中临场模式选择表，默认使用临场模式。"
+    if live_selection_row:
+        preferred_mode = live_selection_row["recommendedMode"]
+        selection_reason = (
+            f"{key_label} → {live_selection_row['recommendationReason']}"
+        )
+
+    live_predictions: dict[str, dict] = {}
+    live_errors: list[str] = []
+    for feature_mode in ("opening_only", "closing_only", "hybrid"):
+        try:
+            live_predictions[feature_mode] = compute_calibrated_prediction(
+                opening_rows,
+                closing_rows,
+                feature_mode,
+            )
+        except Exception as error:
+            live_errors.append(f"{CALIBRATED_MODE_LABELS[feature_mode]}推理失败：{error}")
+
+    if preferred_mode not in live_predictions:
+        fallback_modes = (
+            ("closing_only", "临场模式"),
+            ("opening_only", "初赔模式"),
+            ("hybrid", "初赔+临场模式"),
+        )
+        for fallback_mode, fallback_label in fallback_modes:
+            if fallback_mode in live_predictions:
+                preferred_mode = fallback_mode
+                selection_reason = (
+                    f"{selection_reason}；目标模式不可用，回退{fallback_label}。"
+                )
+                break
+        else:
+            fallback_reason = "；".join(live_errors) if live_errors else "临场增强模式均不可用。"
+            return {
+                "openingPrediction": opening_prediction,
+                "effectiveMode": "opening_only",
+                "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
+                "phaseStatus": "已开球",
+                "modeSelectionBasis": f"{selection_reason}；{fallback_reason}，回退初赔模式。",
+                "modeHistoryAccuracy": opening_prediction["bettingDecision"]["historyAccuracySummary"],
+                "historySampleSize": opening_prediction["bettingDecision"]["historySampleSize"],
+                "historyAccuracySummary": opening_prediction["bettingDecision"]["historyAccuracySummary"],
+                "finalAction": opening_prediction["bettingDecision"]["action"],
+                "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
+                "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
+                "effectivePrediction": opening_prediction,
+            }
+
+    selected_prediction = live_predictions[preferred_mode]
+    decision_type = normalize_decision_type(selected_prediction["decision"]["type"])
+    if live_selection_row:
+        history_summary = build_calibrated_history_summary(
+            live_selection_row,
+            preferred_mode,
+            decision_type,
+        )
+        history_sample_size = str(live_selection_row["matches"])
+    else:
+        history_summary = (
+            f"未命中模式选择表或样本低于{live_meta.get('minSample', MODE_SELECTION_DEFAULT_MIN_SAMPLE)}场，"
+            f"默认使用{selected_prediction['modeLabel']}模式。"
+        )
+        history_sample_size = "样本不足"
+
+    final_action = "单选" if decision_type == "single" else "双选"
+    if live_errors:
+        selection_reason = f"{selection_reason}；{'；'.join(live_errors)}"
+
+    return {
+        "openingPrediction": opening_prediction,
+        "effectiveMode": preferred_mode,
+        "effectiveModeLabel": selected_prediction["modeLabel"],
+        "phaseStatus": "已开球",
+        "modeSelectionBasis": selection_reason,
+        "modeHistoryAccuracy": history_summary,
+        "historySampleSize": history_sample_size,
+        "historyAccuracySummary": history_summary,
+        "finalAction": final_action,
+        "finalPrediction": selected_prediction["prediction"],
+        "decisionBasis": key_label,
+        "effectivePrediction": selected_prediction,
     }
