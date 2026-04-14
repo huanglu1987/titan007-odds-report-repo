@@ -5,7 +5,7 @@ description: "根据北京时间时间范围生成球探未来赛程欧赔预测
 
 # Titan007 Odds Report
 
-用这个 skill 时，优先复用仓库里的 `scripts/generate_titan007_high_confidence_report.py`，不要重新手写抓取和导出流程。
+用这个 skill 时，优先复用 skill 目录内自带的 `scripts/generate_titan007_high_confidence_report.py`，不要重新手写抓取和导出流程。
 
 ## 输入要求
 
@@ -18,12 +18,33 @@ description: "根据北京时间时间范围生成球探未来赛程欧赔预测
 
 - 信任等级：`高`、`高,中` 或 `高,中,谨慎`
 - 信任等级筛选口径：`opening` 或 `effective`
-- 输出路径；如果用户不指定，默认直接导出到 Mac 桌面
+- 输出路径；如果用户不指定，优先导出到 `~/Desktop`，如果目标设备没有桌面目录，则回退到 skill 目录下的 `output/`
 
 不需要用户提供：
 
 - 临场赔率
 - 额外的模式切换参数
+
+## 跨设备安装说明
+
+这个 skill 现在按“自包含”方式打包，支持两种用法：
+
+1. 作为仓库运行：
+   - 在仓库根目录执行 `.codex/skills/titan007-odds-report/scripts/run_report.py`
+2. 作为 GitHub skill 安装：
+   - 只安装 `.codex/skills/titan007-odds-report` 这个目录后，也可以直接运行
+   - skill 目录内部已经自带：
+     - `scripts/generate_titan007_high_confidence_report.py`
+     - `scripts/titan007_extract_euro_odds.py`
+     - `runtime/football-odds-predictor/predictor_py.py`
+     - `runtime/football-odds-predictor/calibration/*.json`
+     - `requirements.txt`
+
+首次在新设备上使用前，至少需要：
+
+```bash
+python3 -m pip install -r /path/to/titan007-odds-report/requirements.txt
+```
 
 ## 当前模型口径
 
@@ -37,7 +58,8 @@ description: "根据北京时间时间范围生成球探未来赛程欧赔预测
 
 ## 工作流程
 
-1. 优先在仓库根目录执行；如果不在仓库根目录，就确保能定位到包含 `scripts/generate_titan007_high_confidence_report.py` 的项目目录。
+1. 优先直接运行 skill 自带的 `scripts/run_report.py`。
+2. 默认按 skill 自身目录查找依赖；如果用户显式传了 `--project-root`，则改用该目录。
 2. 运行 skill 自带脚本 `scripts/run_report.py`，把用户给的开始时间、结束时间、信任等级传进去。
 3. 等待脚本生成 Excel。
 4. 把最终 Excel 绝对路径告诉用户。
@@ -45,7 +67,17 @@ description: "根据北京时间时间范围生成球探未来赛程欧赔预测
 
 ## 运行方式
 
-在项目根目录下优先运行：
+在仓库或已安装的 skill 目录下，都可以优先运行：
+
+```bash
+python3 scripts/run_report.py \
+  --start "2026-03-29 18:00" \
+  --end "2026-04-03 00:00" \
+  --confidences "高,中,谨慎" \
+  --confidence-source "opening"
+```
+
+如果是从仓库根目录运行，也可以：
 
 ```bash
 python3 .codex/skills/titan007-odds-report/scripts/run_report.py \
@@ -55,7 +87,7 @@ python3 .codex/skills/titan007-odds-report/scripts/run_report.py \
   --confidence-source "opening"
 ```
 
-如果不在项目根目录，可以显式传 `--project-root`：
+如果要显式指定仓库根目录，可以传 `--project-root`：
 
 ```bash
 python3 /path/to/titan007-odds-report/scripts/run_report.py \
@@ -66,11 +98,11 @@ python3 /path/to/titan007-odds-report/scripts/run_report.py \
   --confidence-source "opening"
 ```
 
-如果 skill 作为仓库的一部分被提交，`run_report.py` 会先尝试使用当前工作目录；如果当前目录不是仓库根目录，它会再自动按自身所在位置向上推断项目根目录。
+如果 skill 是通过 GitHub 安装器单独安装的，`run_report.py` 会直接使用 skill 自己的目录，不依赖仓库根目录。
 
 ## 输出约定
 
-默认输出到 Mac 桌面：`~/Desktop/`。
+默认优先输出到 `~/Desktop/`；如果当前设备没有该目录，则回退到 skill 目录下的 `output/`。
 
 当前脚本会生成：
 
@@ -143,6 +175,7 @@ Excel 已生成：{绝对路径}
 - 当前 skill 的使用前提只要求时间范围，不要求用户提供临场赔率。
 - 当前默认输出应理解为“最新初赔监督学习模型”的结果，而不是旧的临场增强模式。
 - 只要目标站点返回失败，就可能导致覆盖率下降；这是网络问题，不要误报为“没有比赛”。
+- 如果是刚安装到新设备，先安装 skill 目录中的 `requirements.txt`。
 - 如果用户只要 `高`，传 `--confidences "高"`；如果要 `高 + 中`，传 `--confidences "高,中"`；如果要把 `高/中/谨慎` 三层都导出，传 `--confidences "高,中,谨慎"`。
 - 生成后的 Excel 中，`最终预测结果` 应优先理解为当前初赔模型的输出。
 - `原始预测结果` 会保留，方便与最终结果对照。

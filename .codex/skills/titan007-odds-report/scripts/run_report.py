@@ -7,11 +7,16 @@ from pathlib import Path
 
 
 DESKTOP_DIR = Path.home() / "Desktop"
+SKILL_ROOT = Path(__file__).resolve().parents[1]
 
 
 def resolve_project_root(explicit_root: Path | None) -> Path:
     if explicit_root is not None:
         return explicit_root.resolve()
+
+    bundled_script = SKILL_ROOT / "scripts" / "generate_titan007_high_confidence_report.py"
+    if bundled_script.exists():
+        return SKILL_ROOT
 
     cwd_root = Path.cwd().resolve()
     cwd_script = cwd_root / "scripts" / "generate_titan007_high_confidence_report.py"
@@ -28,11 +33,14 @@ def resolve_project_root(explicit_root: Path | None) -> Path:
     )
 
 
-def build_default_output_path(start: str, end: str, confidences: str) -> Path:
+def build_default_output_path(project_root: Path, start: str, end: str, confidences: str) -> Path:
     confidence_slug = "_".join(sorted(item.strip() for item in confidences.split(",") if item.strip()))
     start_slug = start.replace("-", "").replace(":", "").replace(" ", "_")
     end_slug = end.replace("-", "").replace(":", "").replace(" ", "_")
-    return DESKTOP_DIR / f"titan007_{confidence_slug}_confidence_{start_slug}_{end_slug}.xlsx"
+    filename = f"titan007_{confidence_slug}_confidence_{start_slug}_{end_slug}.xlsx"
+    if DESKTOP_DIR.exists():
+        return DESKTOP_DIR / filename
+    return project_root / "output" / filename
 
 
 def main() -> None:
@@ -69,6 +77,7 @@ def main() -> None:
         raise FileNotFoundError(f"未找到报表脚本: {target_script}")
 
     output_path = args.output.resolve() if args.output else build_default_output_path(
+        project_root,
         args.start,
         args.end,
         args.confidences,

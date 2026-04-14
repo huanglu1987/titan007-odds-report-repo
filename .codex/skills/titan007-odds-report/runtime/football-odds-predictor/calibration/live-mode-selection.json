@@ -1,0 +1,903 @@
+{
+  "generatedAt": "2026-04-05T03:29:08.562Z",
+  "source": "football-data.co.uk",
+  "preset": "core6",
+  "trainSeasons": [
+    "2122",
+    "2223"
+  ],
+  "validationSeasons": [
+    "2324"
+  ],
+  "minSample": 30,
+  "rows": [
+    {
+      "structure": "中-偏主",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "double",
+      "matches": 411,
+      "recommendedMode": "hybrid",
+      "recommendationReason": "初赔+临场在 inclusiveHitRate 上更优，允许覆盖临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.4185,
+        "singlePredictionAccuracy": 0.4104,
+        "inclusiveHitRate": 0.5718
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.438,
+        "singlePredictionAccuracy": 0.4531,
+        "inclusiveHitRate": 0.5791
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4258,
+        "singlePredictionAccuracy": 0.4438,
+        "inclusiveHitRate": 0.6131
+      }
+    },
+    {
+      "structure": "中-偏平",
+      "topGapBucket": "0-0.10",
+      "decisionType": "double",
+      "matches": 406,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 inclusiveHitRate 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.3768,
+        "singlePredictionAccuracy": 0.3788,
+        "inclusiveHitRate": 0.5616
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4187,
+        "singlePredictionAccuracy": 0.4097,
+        "inclusiveHitRate": 0.5961
+      },
+      "hybrid": {
+        "top1Accuracy": 0.3966,
+        "singlePredictionAccuracy": 0.4,
+        "inclusiveHitRate": 0.5493
+      }
+    },
+    {
+      "structure": "高-强主",
+      "topGapBucket": "0.30-0.40",
+      "decisionType": "single",
+      "matches": 307,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.6189,
+        "singlePredictionAccuracy": 0.6189,
+        "inclusiveHitRate": 0.6189
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.6189,
+        "singlePredictionAccuracy": 0.623,
+        "inclusiveHitRate": 0.6221
+      },
+      "hybrid": {
+        "top1Accuracy": 0.6189,
+        "singlePredictionAccuracy": 0.623,
+        "inclusiveHitRate": 0.6189
+      }
+    },
+    {
+      "structure": "高-强主",
+      "topGapBucket": "0.20-0.30",
+      "decisionType": "single",
+      "matches": 270,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.5481,
+        "singlePredictionAccuracy": 0.5481,
+        "inclusiveHitRate": 0.5481
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5444,
+        "singlePredictionAccuracy": 0.5492,
+        "inclusiveHitRate": 0.5481
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5333,
+        "singlePredictionAccuracy": 0.5373,
+        "inclusiveHitRate": 0.5519
+      }
+    },
+    {
+      "structure": "中-偏客",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "double",
+      "matches": 197,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 inclusiveHitRate 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.4619,
+        "singlePredictionAccuracy": 0.4588,
+        "inclusiveHitRate": 0.4619
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4569,
+        "singlePredictionAccuracy": 0.4457,
+        "inclusiveHitRate": 0.4975
+      },
+      "hybrid": {
+        "top1Accuracy": 0.467,
+        "singlePredictionAccuracy": 0.4574,
+        "inclusiveHitRate": 0.4822
+      }
+    },
+    {
+      "structure": "高-分胜负",
+      "topGapBucket": "0.20-0.30",
+      "decisionType": "single",
+      "matches": 185,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.5081,
+        "singlePredictionAccuracy": 0.5082,
+        "inclusiveHitRate": 0.5135
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5081,
+        "singlePredictionAccuracy": 0.5115,
+        "inclusiveHitRate": 0.5243
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5027,
+        "singlePredictionAccuracy": 0.5094,
+        "inclusiveHitRate": 0.5405
+      }
+    },
+    {
+      "structure": "高-强主",
+      "topGapBucket": "0.50以上",
+      "decisionType": "single",
+      "matches": 181,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.8398,
+        "singlePredictionAccuracy": 0.8398,
+        "inclusiveHitRate": 0.8398
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.8398,
+        "singlePredictionAccuracy": 0.8398,
+        "inclusiveHitRate": 0.8398
+      },
+      "hybrid": {
+        "top1Accuracy": 0.8398,
+        "singlePredictionAccuracy": 0.8398,
+        "inclusiveHitRate": 0.8398
+      }
+    },
+    {
+      "structure": "中-偏主",
+      "topGapBucket": "0-0.10",
+      "decisionType": "double",
+      "matches": 136,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 inclusiveHitRate 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.375,
+        "singlePredictionAccuracy": 0.4286,
+        "inclusiveHitRate": 0.6618
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4265,
+        "singlePredictionAccuracy": 0.5128,
+        "inclusiveHitRate": 0.6618
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4191,
+        "singlePredictionAccuracy": 0.3673,
+        "inclusiveHitRate": 0.6029
+      }
+    },
+    {
+      "structure": "高-强主",
+      "topGapBucket": "0.40-0.50",
+      "decisionType": "single",
+      "matches": 135,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.6963,
+        "singlePredictionAccuracy": 0.6963,
+        "inclusiveHitRate": 0.6963
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.6963,
+        "singlePredictionAccuracy": 0.6963,
+        "inclusiveHitRate": 0.6963
+      },
+      "hybrid": {
+        "top1Accuracy": 0.6963,
+        "singlePredictionAccuracy": 0.6963,
+        "inclusiveHitRate": 0.6963
+      }
+    },
+    {
+      "structure": "高-分胜负",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "single",
+      "matches": 112,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.4821,
+        "singlePredictionAccuracy": 0.4821,
+        "inclusiveHitRate": 0.4821
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4821,
+        "singlePredictionAccuracy": 0.4857,
+        "inclusiveHitRate": 0.4911
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4643,
+        "singlePredictionAccuracy": 0.4756,
+        "inclusiveHitRate": 0.5625
+      }
+    },
+    {
+      "structure": "高-强客",
+      "topGapBucket": "0.30-0.40",
+      "decisionType": "single",
+      "matches": 94,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.5638,
+        "singlePredictionAccuracy": 0.5638,
+        "inclusiveHitRate": 0.5638
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5638,
+        "singlePredictionAccuracy": 0.5699,
+        "inclusiveHitRate": 0.5638
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5638,
+        "singlePredictionAccuracy": 0.5638,
+        "inclusiveHitRate": 0.5638
+      }
+    },
+    {
+      "structure": "谨慎-主客胶着",
+      "topGapBucket": "0-0.10",
+      "decisionType": "abstain",
+      "matches": 91,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 inclusiveHitRate 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.3736,
+        "singlePredictionAccuracy": 0.3182,
+        "inclusiveHitRate": 0.5604
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4396,
+        "singlePredictionAccuracy": 0.44,
+        "inclusiveHitRate": 0.6703
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4066,
+        "singlePredictionAccuracy": 0.4082,
+        "inclusiveHitRate": 0.5385
+      }
+    },
+    {
+      "structure": "高-强客",
+      "topGapBucket": "0.20-0.30",
+      "decisionType": "single",
+      "matches": 90,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "singlePredictionAccuracy 差距不足 1.0pp，默认保留临场模式作为稳定底座。",
+      "fallback": "delta_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.4556,
+        "singlePredictionAccuracy": 0.4545,
+        "inclusiveHitRate": 0.4667
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4667,
+        "singlePredictionAccuracy": 0.4607,
+        "inclusiveHitRate": 0.4667
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4667,
+        "singlePredictionAccuracy": 0.4667,
+        "inclusiveHitRate": 0.4667
+      }
+    },
+    {
+      "structure": "中-偏客",
+      "topGapBucket": "0-0.10",
+      "decisionType": "single",
+      "matches": 74,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.3649,
+        "singlePredictionAccuracy": 0.3385,
+        "inclusiveHitRate": 0.3784
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.3649,
+        "singlePredictionAccuracy": 0.4286,
+        "inclusiveHitRate": 0.5541
+      },
+      "hybrid": {
+        "top1Accuracy": 0.3514,
+        "singlePredictionAccuracy": 0.3636,
+        "inclusiveHitRate": 0.4054
+      }
+    },
+    {
+      "structure": "高-强客",
+      "topGapBucket": "0.40-0.50",
+      "decisionType": "single",
+      "matches": 42,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.6429,
+        "singlePredictionAccuracy": 0.6429,
+        "inclusiveHitRate": 0.6429
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.6429,
+        "singlePredictionAccuracy": 0.6429,
+        "inclusiveHitRate": 0.6429
+      },
+      "hybrid": {
+        "top1Accuracy": 0.6429,
+        "singlePredictionAccuracy": 0.6429,
+        "inclusiveHitRate": 0.6429
+      }
+    },
+    {
+      "structure": "中-偏平",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "double",
+      "matches": 42,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 inclusiveHitRate 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.4048,
+        "singlePredictionAccuracy": 0.7143,
+        "inclusiveHitRate": 0.7143
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5,
+        "singlePredictionAccuracy": 0.5714,
+        "inclusiveHitRate": 0.7619
+      },
+      "hybrid": {
+        "top1Accuracy": 0.381,
+        "singlePredictionAccuracy": 0.4,
+        "inclusiveHitRate": 0.7143
+      }
+    },
+    {
+      "structure": "高-强客",
+      "topGapBucket": "0.50以上",
+      "decisionType": "single",
+      "matches": 40,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.85,
+        "singlePredictionAccuracy": 0.85,
+        "inclusiveHitRate": 0.85
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.85,
+        "singlePredictionAccuracy": 0.85,
+        "inclusiveHitRate": 0.85
+      },
+      "hybrid": {
+        "top1Accuracy": 0.85,
+        "singlePredictionAccuracy": 0.85,
+        "inclusiveHitRate": 0.85
+      }
+    },
+    {
+      "structure": "谨慎-主客胶着",
+      "topGapBucket": "0-0.10",
+      "decisionType": "single",
+      "matches": 40,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "临场模式在 singlePredictionAccuracy 上更优或更稳，保持临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.3,
+        "singlePredictionAccuracy": 0.2593,
+        "inclusiveHitRate": 0.4
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.35,
+        "singlePredictionAccuracy": 0.5833,
+        "inclusiveHitRate": 0.625
+      },
+      "hybrid": {
+        "top1Accuracy": 0.3,
+        "singlePredictionAccuracy": 0.3438,
+        "inclusiveHitRate": 0.4
+      }
+    },
+    {
+      "structure": "高-防平",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "single",
+      "matches": 33,
+      "recommendedMode": "opening_only",
+      "recommendationReason": "初赔模式在 singlePredictionAccuracy 上更优，允许覆盖临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.5152,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.5455
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5152,
+        "singlePredictionAccuracy": 0.4615,
+        "inclusiveHitRate": 0.5758
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5455,
+        "singlePredictionAccuracy": 0.3,
+        "inclusiveHitRate": 0.697
+      }
+    },
+    {
+      "structure": "高-分胜负",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "double",
+      "matches": 30,
+      "recommendedMode": "hybrid",
+      "recommendationReason": "初赔+临场在 inclusiveHitRate 上更优，允许覆盖临场模式。",
+      "fallback": null,
+      "openingOnly": {
+        "top1Accuracy": 0.5667,
+        "singlePredictionAccuracy": 0.6296,
+        "inclusiveHitRate": 0.5667
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5667,
+        "singlePredictionAccuracy": 0.5667,
+        "inclusiveHitRate": 0.5667
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5667,
+        "singlePredictionAccuracy": 0.64,
+        "inclusiveHitRate": 0.6333
+      }
+    },
+    {
+      "structure": "高-防平",
+      "topGapBucket": "0.20-0.30",
+      "decisionType": "single",
+      "matches": 27,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 27 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.5185,
+        "singlePredictionAccuracy": 0.5185,
+        "inclusiveHitRate": 0.5185
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4815,
+        "singlePredictionAccuracy": 0.4348,
+        "inclusiveHitRate": 0.5185
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5185,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.6667
+      }
+    },
+    {
+      "structure": "中-偏主",
+      "topGapBucket": "0-0.10",
+      "decisionType": "single",
+      "matches": 27,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 27 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.4074,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.7407
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.3333,
+        "singlePredictionAccuracy": 0.5556,
+        "inclusiveHitRate": 0.6667
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4815,
+        "singlePredictionAccuracy": 0.2857,
+        "inclusiveHitRate": 0.6296
+      }
+    },
+    {
+      "structure": "中-偏平",
+      "topGapBucket": "0-0.10",
+      "decisionType": "single",
+      "matches": 21,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 21 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.1905,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0.381
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.2381,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0.4286
+      },
+      "hybrid": {
+        "top1Accuracy": 0.0952,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0.1905
+      }
+    },
+    {
+      "structure": "中-偏主",
+      "topGapBucket": "0.20-0.30",
+      "decisionType": "double",
+      "matches": 17,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 17 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.4118,
+        "singlePredictionAccuracy": 0.4118,
+        "inclusiveHitRate": 0.4118
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4118,
+        "singlePredictionAccuracy": 0.4286,
+        "inclusiveHitRate": 0.4118
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4118,
+        "singlePredictionAccuracy": 0.3636,
+        "inclusiveHitRate": 0.4118
+      }
+    },
+    {
+      "structure": "中-偏客",
+      "topGapBucket": "0-0.10",
+      "decisionType": "double",
+      "matches": 14,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 14 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.2857,
+        "singlePredictionAccuracy": 0.125,
+        "inclusiveHitRate": 0.3571
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.0714,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0.5
+      },
+      "hybrid": {
+        "top1Accuracy": 0.2143,
+        "singlePredictionAccuracy": 0.1429,
+        "inclusiveHitRate": 0.4286
+      }
+    },
+    {
+      "structure": "中-偏平",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "single",
+      "matches": 12,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 12 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.5,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.6667
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.25,
+        "singlePredictionAccuracy": 0.25,
+        "inclusiveHitRate": 0.5
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4167,
+        "singlePredictionAccuracy": 0.3333,
+        "inclusiveHitRate": 0.6667
+      }
+    },
+    {
+      "structure": "谨慎-不建议单押",
+      "topGapBucket": "0.10-0.20",
+      "decisionType": "abstain",
+      "matches": 7,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 7 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.2857,
+        "singlePredictionAccuracy": 0.3333,
+        "inclusiveHitRate": 0.4286
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.4286,
+        "singlePredictionAccuracy": 0.4,
+        "inclusiveHitRate": 0.5714
+      },
+      "hybrid": {
+        "top1Accuracy": 0.4286,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.5714
+      }
+    },
+    {
+      "structure": "中-偏主",
+      "topGapBucket": "0.30-0.40",
+      "decisionType": "double",
+      "matches": 7,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 7 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.5714,
+        "singlePredictionAccuracy": 0.5714,
+        "inclusiveHitRate": 0.5714
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5714,
+        "singlePredictionAccuracy": 0.5714,
+        "inclusiveHitRate": 0.5714
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5714,
+        "singlePredictionAccuracy": 0.5714,
+        "inclusiveHitRate": 0.5714
+      }
+    },
+    {
+      "structure": "高-分胜负",
+      "topGapBucket": "0.30-0.40",
+      "decisionType": "single",
+      "matches": 5,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 5 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.6,
+        "singlePredictionAccuracy": 0.6,
+        "inclusiveHitRate": 0.6
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.6,
+        "singlePredictionAccuracy": 0.6,
+        "inclusiveHitRate": 0.6
+      },
+      "hybrid": {
+        "top1Accuracy": 0.6,
+        "singlePredictionAccuracy": 0.6,
+        "inclusiveHitRate": 0.6
+      }
+    },
+    {
+      "structure": "谨慎-不建议单押",
+      "topGapBucket": "0.20-0.30",
+      "decisionType": "abstain",
+      "matches": 3,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 3 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0.3333,
+        "singlePredictionAccuracy": 0.3333,
+        "inclusiveHitRate": 0.3333
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.3333,
+        "singlePredictionAccuracy": 0.3333,
+        "inclusiveHitRate": 0.3333
+      },
+      "hybrid": {
+        "top1Accuracy": 0.3333,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.3333
+      }
+    },
+    {
+      "structure": "中-偏客",
+      "topGapBucket": "0.30-0.40",
+      "decisionType": "double",
+      "matches": 2,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 2 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "closingOnly": {
+        "top1Accuracy": 0.5,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.5
+      },
+      "hybrid": {
+        "top1Accuracy": 0.5,
+        "singlePredictionAccuracy": 0.5,
+        "inclusiveHitRate": 0.5
+      }
+    },
+    {
+      "structure": "谨慎-不建议单押",
+      "topGapBucket": "0-0.10",
+      "decisionType": "abstain",
+      "matches": 1,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 1 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "closingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "hybrid": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 1
+      }
+    },
+    {
+      "structure": "谨慎-不建议单押",
+      "topGapBucket": "0.30-0.40",
+      "decisionType": "abstain",
+      "matches": 1,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 1 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "closingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "hybrid": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      }
+    },
+    {
+      "structure": "谨慎-不建议单押",
+      "topGapBucket": "0.40-0.50",
+      "decisionType": "abstain",
+      "matches": 1,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 1 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "closingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "hybrid": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      }
+    },
+    {
+      "structure": "谨慎-不建议单押",
+      "topGapBucket": "0.50以上",
+      "decisionType": "abstain",
+      "matches": 1,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 1 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "closingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "hybrid": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      }
+    },
+    {
+      "structure": "谨慎-主客胶着",
+      "topGapBucket": "0-0.10",
+      "decisionType": "double",
+      "matches": 1,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 1 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 0,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0
+      },
+      "closingOnly": {
+        "top1Accuracy": 0,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0
+      },
+      "hybrid": {
+        "top1Accuracy": 0,
+        "singlePredictionAccuracy": 0,
+        "inclusiveHitRate": 0
+      }
+    },
+    {
+      "structure": "中-偏客",
+      "topGapBucket": "0.40-0.50",
+      "decisionType": "double",
+      "matches": 1,
+      "recommendedMode": "closing_only",
+      "recommendationReason": "样本 1 场，低于 30 场门槛，默认回退临场模式。",
+      "fallback": "sample_too_small",
+      "openingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "closingOnly": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      },
+      "hybrid": {
+        "top1Accuracy": 1,
+        "singlePredictionAccuracy": 1,
+        "inclusiveHitRate": 1
+      }
+    }
+  ]
+}
