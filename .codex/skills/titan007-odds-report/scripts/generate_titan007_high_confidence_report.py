@@ -92,6 +92,10 @@ class MatchReportRow:
     effective_mode: str
     final_action: str
     final_prediction: str
+    posthoc_calibration_action: str
+    posthoc_calibration_prediction: str
+    posthoc_calibration_risk: str
+    posthoc_calibration_basis: str
     decision_basis: str
     mode_selection_basis: str
     mode_history_accuracy: str
@@ -374,6 +378,9 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             closing_rows,
             match_started=CURRENT_TIME_BJT >= match.kickoff_bjt,
             prediction_style=PREDICTION_STYLE,
+            league=match.league,
+            home_team=match.home_team,
+            away_team=match.away_team,
         )
     except Exception as error:  # noqa: BLE001
         return None, [
@@ -441,6 +448,10 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             effective_mode=prediction["effectiveModeLabel"],
             final_action=prediction["finalAction"],
             final_prediction=prediction["finalPrediction"],
+            posthoc_calibration_action=prediction["posthocCalibrationAction"],
+            posthoc_calibration_prediction=prediction["posthocCalibrationPrediction"],
+            posthoc_calibration_risk=prediction["posthocCalibrationRisk"],
+            posthoc_calibration_basis=prediction["posthocCalibrationBasis"],
             decision_basis=prediction["decisionBasis"],
             mode_selection_basis=prediction["modeSelectionBasis"],
             mode_history_accuracy=prediction["modeHistoryAccuracy"],
@@ -505,6 +516,10 @@ def append_match_rows(sheet, rows: Iterable[MatchReportRow]) -> None:
                 row.effective_mode,
                 row.final_action,
                 row.final_prediction,
+                row.posthoc_calibration_action,
+                row.posthoc_calibration_prediction,
+                row.posthoc_calibration_risk,
+                row.posthoc_calibration_basis,
                 row.decision_basis,
                 row.mode_selection_basis,
                 row.mode_history_accuracy,
@@ -537,6 +552,70 @@ def append_league_section(
     sheet.append(detail_headers)
     style_header_row(sheet, header_row_index)
     append_match_rows(sheet, league_rows)
+
+
+def append_posthoc_calibration_sheet(workbook: Workbook) -> None:
+    sheet = workbook.create_sheet("赛后校准规则")
+    sheet["A1"] = "赛后校准/风险修正建议"
+    sheet["A1"].font = Font(bold=True, size=13)
+    sheet["A2"] = "样本来源"
+    sheet["B2"] = "2026-05-16 10:30 至 2026-05-18 10:00，两期 Titan007 预测与实际赛果复盘；279场，276场完赛。"
+    sheet["A3"] = "总体命中"
+    sheet["B3"] = "单选 59/98=60.2%；双选 137/178=77.0%；整体 196/276=71.0%。"
+    sheet["A4"] = "使用边界"
+    sheet["B4"] = "本页规则只生成辅助校准建议，不改写原模型的“最终决策动作”和“最终预测结果”；生产报表不抓取实际赛果。"
+
+    current_row = 6
+    sheet.cell(current_row, 1, "双选规则")
+    sheet.cell(current_row, 1).font = Font(bold=True)
+    sheet.cell(current_row, 1).fill = section_fill()
+    current_row += 1
+    double_headers = ["触发条件", "赛后校准动作", "校准建议结果", "风险", "依据"]
+    sheet.append(double_headers)
+    style_header_row(sheet, current_row)
+    current_row += 1
+    double_rows = [
+        ["最终预测结果=主胜/平局", "优先第一个", "主胜", "低", "第一项命中27/48，任一命中率高。"],
+        ["结构=高-分胜负", "优先第一个", "第一项", "低", "高-分胜负降级双选第一项命中7/9。"],
+        ["结构=中-偏平 或 中-偏主", "优先第一个", "第一项", "中", "第一项更占优，但仍建议保留原双选保护。"],
+        ["市场共识0.78~0.82", "偏第一项", "第一项", "中", "该共识区间第一选项复盘最稳，约55%。"],
+        ["市场共识>0.86", "第一/第二均衡", "原双选", "中", "第一、第二命中率接近，不强行改方向。"],
+        ["中-偏客 + 主/客对冲双选", "补平或回避", "平局保护", "高", "偏客对冲平局漏选风险高；若共识>0.86，建议改选平局。"],
+        ["中-偏客 + 客胜/平局", "警惕主胜", "主胜保护/回避", "高", "该组合约半数打出主胜。"],
+        ["高-强客降级双选", "回避", "回避", "高", "样本小且落空率高，作为高风险形态处理。"],
+    ]
+    for row in double_rows:
+        sheet.append(row)
+        current_row += 1
+
+    current_row += 2
+    sheet.cell(current_row, 1, "单选规则")
+    sheet.cell(current_row, 1).font = Font(bold=True)
+    sheet.cell(current_row, 1).fill = section_fill()
+    current_row += 1
+    single_headers = ["触发条件", "赛后校准动作", "校准建议结果", "风险", "依据"]
+    sheet.append(single_headers)
+    style_header_row(sheet, current_row)
+    current_row += 1
+    single_rows = [
+        ["女足赛事单选", "跟随", "原单选", "低", "女足赛事单选复盘10/12命中。"],
+        ["前二差值>0.55", "跟随", "原单选", "低", "该档单选复盘13/17命中。"],
+        ["主胜单 + 市场共识>=0.84", "跟随", "主胜", "低", "主胜单+高共识复盘27/39命中。"],
+        ["结构=高-强主", "跟随", "原单选", "低", "高-强主单选复盘39/59命中。"],
+        ["主胜单 + 前二差值0.45~0.55 + 共识<0.84", "改带平双选", "主胜/平局", "高", "该组合命中率约40%，优先补平。"],
+        ["平局单 或 偏平/防平结构单选", "回避", "不跟", "高", "这类单选复盘6场全未中。"],
+        ["客胜单 + 前二差值<0.5", "谨慎补平或回避", "客胜/平局", "中", "客胜单波动较大，低差值时优先补平。"],
+        ["其他单选", "谨慎防平", "原单选/平局", "中", "单选未中去向以平局为主，优先补平而不是直接反买。"],
+    ]
+    for row in single_rows:
+        sheet.append(row)
+        current_row += 1
+
+    set_column_widths(sheet, {1: 34, 2: 18, 3: 18, 4: 10, 5: 48})
+    for row_cells in sheet.iter_rows(min_row=1):
+        for cell in row_cells:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    sheet.freeze_panes = "A7"
 
 
 def append_betting_decision_table_sheet(workbook: Workbook) -> None:
@@ -716,6 +795,10 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         "生效预测模式",
         "最终决策动作",
         "最终预测结果",
+        "赛后校准动作",
+        "校准建议结果",
+        "校准风险等级",
+        "校准依据",
         "决策依据",
         "模式选择依据",
         "模式历史准确率",
@@ -771,17 +854,21 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
                 16: 12,
                 17: 14,
                 18: 14,
-                19: 28,
-                20: 36,
-                21: 36,
-                22: 12,
-                23: 36,
-                24: 12,
-                25: 40,
-                26: 36,
-                27: 60,
-                28: 60,
-                29: 42,
+                19: 14,
+                20: 16,
+                21: 12,
+                22: 34,
+                23: 28,
+                24: 36,
+                25: 36,
+                26: 12,
+                27: 36,
+                28: 12,
+                29: 40,
+                30: 36,
+                31: 60,
+                32: 60,
+                33: 42,
             },
         )
         sheet.freeze_panes = "A1"
@@ -789,6 +876,7 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
             for cell in row_cells:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
 
+    append_posthoc_calibration_sheet(workbook)
     append_betting_decision_table_sheet(workbook)
     append_live_mode_selection_sheet(workbook)
 

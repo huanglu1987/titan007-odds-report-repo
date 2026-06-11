@@ -2218,12 +2218,216 @@ def get_live_mode_selection_table() -> list[dict[str, str]]:
     return rows
 
 
+def split_posthoc_prediction(prediction: str) -> list[str]:
+    parts = [
+        item.strip()
+        for item in prediction.replace("／", "/").split("/")
+        if item.strip()
+    ]
+    return [item for item in parts if item in {"主胜", "平局", "客胜"}]
+
+
+def is_women_match(league: str = "", home_team: str = "", away_team: str = "") -> bool:
+    return any("女" in item for item in (league, home_team, away_team))
+
+
+def build_posthoc_calibration_advice(
+    *,
+    final_prediction: str,
+    final_action: str = "",
+    structure_label: str = "",
+    market_consensus: float = 0.0,
+    top_gap: float = 0.0,
+    league: str = "",
+    home_team: str = "",
+    away_team: str = "",
+) -> dict[str, str]:
+    """Apply the 2026-05-16~18 post-hoc Titan007 review rules."""
+    prediction_parts = split_posthoc_prediction(final_prediction)
+    first = prediction_parts[0] if prediction_parts else ""
+    is_double = len(prediction_parts) == 2
+    is_single = len(prediction_parts) == 1
+    no_draw_double = is_double and "平局" not in prediction_parts
+
+    if is_double:
+        if structure_label == "高-强客":
+            return {
+                "action": "建议回避",
+                "recommendation": "回避",
+                "risk": "高",
+                "basis": "高-强客降级双选在两期复盘中样本很小且落空率高，作为高风险形态处理。",
+            }
+        if structure_label == "中-偏客" and no_draw_double:
+            if market_consensus > 0.86:
+                return {
+                    "action": "建议改选平局",
+                    "recommendation": "平局",
+                    "risk": "高",
+                    "basis": "中-偏客 + 主/客对冲 + 市场共识>0.86 时，复盘样本约64%打出平局。",
+                }
+            return {
+                "action": "建议补平或回避",
+                "recommendation": "平局保护",
+                "risk": "高",
+                "basis": "中-偏客的主/客对冲双选平局漏选风险高，复盘样本约46%出平局。",
+            }
+        if structure_label == "中-偏客" and final_prediction == "客胜/平局":
+            return {
+                "action": "警惕主胜",
+                "recommendation": "主胜保护/回避",
+                "risk": "高",
+                "basis": "中-偏客 + 客胜/平局组合复盘中约半数打出主胜，被排除的主胜需要保护。",
+            }
+        if final_prediction == "主胜/平局":
+            return {
+                "action": "优先第一个",
+                "recommendation": "主胜",
+                "risk": "低",
+                "basis": "主胜/平局是两期复盘的黄金组合，第一项命中27/48，任一命中率高。",
+            }
+        if structure_label == "高-分胜负":
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高-分胜负降级双选第一项命中7/9，可优先按第一项理解。",
+            }
+        if market_consensus > 0.86:
+            return {
+                "action": "第一/第二均衡",
+                "recommendation": final_prediction,
+                "risk": "中",
+                "basis": "市场共识>0.86时第一、第二选项命中率接近，不强行改方向。",
+            }
+        if structure_label in {"中-偏平", "中-偏主"}:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "中",
+                "basis": f"{structure_label} 双选在复盘中第一项更占优，但仍建议保留原双选作保护。",
+            }
+        if 0.78 <= market_consensus <= 0.82:
+            return {
+                "action": "偏第一项",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "市场共识0.78~0.82区间第一选项最稳，复盘第一项命中率约55%。",
+            }
+        return {
+            "action": "保留原双选",
+            "recommendation": final_prediction,
+            "risk": "中",
+            "basis": "未触发明确校准规则，保留模型原双选输出。",
+        }
+
+    if is_single:
+        if first == "平局" or structure_label in {"中-偏平", "高-防平"}:
+            return {
+                "action": "建议回避",
+                "recommendation": "不跟",
+                "risk": "高",
+                "basis": "平局单/偏平防平结构单选在两期复盘中6场全未中。",
+            }
+        if (
+            first == "主胜"
+            and 0.45 <= top_gap <= 0.55
+            and market_consensus < 0.84
+        ):
+            return {
+                "action": "建议改带平双选",
+                "recommendation": "主胜/平局",
+                "risk": "高",
+                "basis": "主胜单 + 前二差值0.45~0.55 + 共识<0.84 命中率仅约40%，优先补平。",
+            }
+        if first == "客胜" and top_gap < 0.5:
+            return {
+                "action": "谨慎补平或回避",
+                "recommendation": "客胜/平局",
+                "risk": "中",
+                "basis": "客胜单整体波动较大，前二差值<0.5时建议补平或回避。",
+            }
+        if is_women_match(league, home_team, away_team):
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "女足赛事单选两期复盘10/12命中，是较稳单选形态。",
+            }
+        if top_gap > 0.55:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "前二差值>0.55的单选复盘13/17命中。",
+            }
+        if first == "主胜" and market_consensus >= 0.84:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "主胜单 + 市场共识>=0.84 复盘27/39命中。",
+            }
+        if structure_label == "高-强主":
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高-强主单选复盘39/59命中。",
+            }
+        return {
+            "action": "谨慎防平",
+            "recommendation": f"{first}/平局" if first != "平局" else "回避",
+            "risk": "中",
+            "basis": "单选未触发高稳规则时，复盘显示优先补平局，而不是直接反买另一端。",
+        }
+
+    return {
+        "action": "无校准建议",
+        "recommendation": final_prediction or "",
+        "risk": "中",
+        "basis": "最终预测结果不是可识别的单选或双选，保留原结果。",
+    }
+
+
+def build_report_posthoc_payload(
+    *,
+    final_prediction: str,
+    final_action: str,
+    opening_prediction: dict,
+    league: str = "",
+    home_team: str = "",
+    away_team: str = "",
+) -> dict[str, str | dict[str, str]]:
+    metrics = opening_prediction.get("metrics") or {}
+    structure_label = (opening_prediction.get("confidenceProfile") or {}).get("label", "")
+    posthoc_advice = build_posthoc_calibration_advice(
+        final_prediction=final_prediction,
+        final_action=final_action,
+        structure_label=structure_label,
+        market_consensus=metrics.get("consensus", 0.0),
+        top_gap=metrics.get("topGap", 0.0),
+        league=league,
+        home_team=home_team,
+        away_team=away_team,
+    )
+    return {
+        "posthocCalibration": posthoc_advice,
+        "posthocCalibrationAction": posthoc_advice["action"],
+        "posthocCalibrationPrediction": posthoc_advice["recommendation"],
+        "posthocCalibrationRisk": posthoc_advice["risk"],
+        "posthocCalibrationBasis": posthoc_advice["basis"],
+    }
+
+
 def compute_report_prediction(
     opening_rows: list[dict],
     closing_rows: list[dict] | None = None,
     *,
     match_started: bool = False,
     prediction_style: str = PREDICTION_STYLE_DEFAULT,
+    league: str = "",
+    home_team: str = "",
+    away_team: str = "",
 ) -> dict:
     normalized_style = normalize_prediction_style(prediction_style)
     opening_prediction = compute_rule_prediction(
@@ -2233,13 +2437,26 @@ def compute_report_prediction(
     key_parts = build_mode_selection_key(opening_prediction)
     key_label = format_mode_selection_key_parts(key_parts)
 
+    def with_posthoc_calibration(result: dict) -> dict:
+        result.update(
+            build_report_posthoc_payload(
+                final_prediction=result["finalPrediction"],
+                final_action=result["finalAction"],
+                opening_prediction=opening_prediction,
+                league=league,
+                home_team=home_team,
+                away_team=away_team,
+            )
+        )
+        return result
+
     if not match_started:
         confidence_info = build_mode_aware_confidence(
             opening_prediction,
             opening_prediction,
             match_started=False,
         )
-        return {
+        return with_posthoc_calibration({
             "openingPrediction": opening_prediction,
             "effectiveMode": "opening_only",
             "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
@@ -2259,7 +2476,7 @@ def compute_report_prediction(
             "finalConfidence": confidence_info["finalConfidence"],
             "confidenceBasis": confidence_info["confidenceBasis"],
             "effectivePrediction": opening_prediction,
-        }
+        })
 
     if not closing_rows:
         confidence_info = build_mode_aware_confidence(
@@ -2268,7 +2485,7 @@ def compute_report_prediction(
             match_started=True,
             selection_row_found=False,
         )
-        return {
+        return with_posthoc_calibration({
             "openingPrediction": opening_prediction,
             "effectiveMode": "opening_only",
             "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
@@ -2288,7 +2505,7 @@ def compute_report_prediction(
             "finalConfidence": confidence_info["finalConfidence"],
             "confidenceBasis": confidence_info["confidenceBasis"],
             "effectivePrediction": opening_prediction,
-        }
+        })
 
     live_selection_row, _, live_meta = resolve_live_mode_selection(opening_prediction)
     preferred_mode = "closing_only"
@@ -2333,7 +2550,7 @@ def compute_report_prediction(
                 match_started=True,
                 selection_row_found=False,
             )
-            return {
+            return with_posthoc_calibration({
                 "openingPrediction": opening_prediction,
                 "effectiveMode": "opening_only",
                 "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
@@ -2353,7 +2570,7 @@ def compute_report_prediction(
                 "finalConfidence": confidence_info["finalConfidence"],
                 "confidenceBasis": confidence_info["confidenceBasis"],
                 "effectivePrediction": opening_prediction,
-            }
+            })
 
     selected_prediction = live_predictions[preferred_mode]
     confidence_info = build_mode_aware_confidence(
@@ -2386,7 +2603,7 @@ def compute_report_prediction(
     if live_errors:
         selection_reason = f"{selection_reason}；{'；'.join(live_errors)}"
 
-    return {
+    return with_posthoc_calibration({
         "openingPrediction": opening_prediction,
         "effectiveMode": preferred_mode,
         "effectiveModeLabel": selected_prediction["modeLabel"],
@@ -2402,4 +2619,4 @@ def compute_report_prediction(
         "finalConfidence": confidence_info["finalConfidence"],
         "confidenceBasis": confidence_info["confidenceBasis"],
         "effectivePrediction": selected_prediction,
-    }
+    })
