@@ -2243,94 +2243,66 @@ def build_posthoc_calibration_advice(
     home_team: str = "",
     away_team: str = "",
 ) -> dict[str, str]:
-    """Apply the four-window post-hoc Titan007 review rules."""
+    """Apply the post-hoc Titan007 review rules."""
     prediction_parts = split_posthoc_prediction(final_prediction)
     first = prediction_parts[0] if prediction_parts else ""
     second = prediction_parts[1] if len(prediction_parts) > 1 else ""
     is_double = len(prediction_parts) == 2
     is_single = len(prediction_parts) == 1
     no_draw_double = is_double and "平局" not in prediction_parts
-    side_draw_double = is_double and second == "平局" and first in {"主胜", "客胜"}
+    draw_first_double = is_double and first == "平局"
     confidence = final_confidence or (
         "高" if "高" in final_action else ("中" if "中" in final_action else "")
     )
 
     if is_double:
-        if structure_label == "高-强客":
+        if no_draw_double:
+            if top_gap < 0.06:
+                return {
+                    "action": "改第二项/平局",
+                    "recommendation": f"{second}/平局",
+                    "risk": "中",
+                    "basis": "主客对冲双选且前二差值<0.06时，五期回测改为第二项+平局约76.3%，高于原对冲66.9%；建议降一档仓位。",
+                }
             return {
-                "action": "建议回避",
-                "recommendation": "回避",
-                "risk": "高",
-                "basis": "高-强客降级双选四期合并7场全不中71%，直接作为高风险回避形态处理。",
+                "action": "保留原双选",
+                "recommendation": final_prediction,
+                "risk": "中",
+                "basis": "主客对冲双选且前二差值>=0.06时，原对冲在该区间约71.6%，优于第二项+平局58.6%；但对冲类整体平局率约31%，仓位低于带平双选。",
             }
-        if structure_label == "高-分胜负":
-            return {
-                "action": "优先第一个",
-                "recommendation": first,
-                "risk": "低",
-                "basis": "高-分胜负双选四期第一项命中69%，全不中仅6%，可优先按第一项理解。",
-            }
-        if no_draw_double and structure_label in {"中-偏平", "中-偏客"}:
-            return {
-                "action": "建议补平或回避",
-                "recommendation": "平局保护",
-                "risk": "高",
-                "basis": "偏平/偏客结构的主客对冲双选四期出平率36%~38%，偏客+高共识约50%，平局只作防守保护。",
-            }
-        if final_prediction == "平局/主胜":
+        if top_gap < 0.02:
             return {
                 "action": "优先第二个",
-                "recommendation": "主胜",
+                "recommendation": second,
                 "risk": "中",
-                "basis": "平局/主胜是四期明确反向信号，第二项主胜命中47%，高于第一项平局28%。",
+                "basis": "前二差值<0.02时第二项优势最集中，五期第二项命中46.0%，高于第一项28.6%。",
             }
         if top_gap < 0.03:
             return {
-                "action": "优先第二个",
-                "recommendation": second,
-                "risk": "中",
-                "basis": "前二差值<0.03时排序几乎无意义，四期第二项命中41%，高于第一项28%。",
-            }
-        if market_consensus > 0.86:
-            return {
-                "action": "优先第二个",
-                "recommendation": second,
-                "risk": "中",
-                "basis": "市场共识>0.86时第二项37%反超第一项32%；若第二项为平局，仅作保护而非进攻型平局单选。",
-            }
-        if 0.78 <= market_consensus <= 0.82:
-            return {
-                "action": "优先第一个",
-                "recommendation": first,
-                "risk": "低",
-                "basis": "市场共识0.78~0.82是四期双选第一项最稳区间，第一项命中52%。",
-            }
-        if side_draw_double:
-            return {
-                "action": "优先第一个",
-                "recommendation": first,
-                "risk": "低" if structure_label != "中-偏客" else "中",
-                "basis": "X/平局双选四期第一项命中47%~48%，落空率仅22%~24%；偏客结构仍需适度降权。",
-            }
-        if top_gap > 0.06:
-            return {
-                "action": "优先第一个",
-                "recommendation": first,
-                "risk": "中",
-                "basis": "前二差值>0.06后第一项稳定占优，四期第一项命中46%~47%。",
-            }
-        if structure_label == "中-偏客":
-            return {
-                "action": "降权保留",
+                "action": "保留原双选",
                 "recommendation": final_prediction,
-                "risk": "高",
-                "basis": "中-偏客双选四期全不中39%，各期均为最弱结构；保留原双选但不反买另一端。",
+                "risk": "中",
+                "basis": "前二差值0.02~0.03跨期不稳定，作为缓冲区保留原双选，禁止单选化。",
+            }
+        if draw_first_double:
+            return {
+                "action": "保留原双选",
+                "recommendation": final_prediction,
+                "risk": "中",
+                "basis": "平局排第一但未进入<0.02强触发区时，不把平局进攻型单选化；平局仅作防守保护。",
+            }
+        if top_gap >= 0.06:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "前二差值>=0.06时第一项明显占优，五期第一项约46%~47%，第二项约29%。",
             }
         return {
-            "action": "保留原双选",
-            "recommendation": final_prediction,
+            "action": "优先第一个",
+            "recommendation": first,
             "risk": "中",
-            "basis": "未触发四期版明确取舍规则，保留模型原双选输出。",
+            "basis": "前二差值0.03~0.06时不再优先第二个，第一项略占优但仍按中风险处理。",
         }
 
     if is_single:
