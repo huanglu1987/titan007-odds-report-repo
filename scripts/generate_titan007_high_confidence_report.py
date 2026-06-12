@@ -6,7 +6,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -31,9 +31,12 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from predictor_py import (  # noqa: E402
     FIXED_COMPANIES,
+    PREDICTION_STYLE_DEFAULT,
+    PREDICTION_STYLE_LABELS,
     compute_report_prediction,
     get_betting_decision_table,
     get_live_mode_selection_table,
+    normalize_prediction_style,
 )
 
 
@@ -53,6 +56,7 @@ LARGE_WINDOW_RETRY_MAX_WORKERS = 8
 VALID_CONFIDENCES = {"高", "中", "谨慎"}
 VALID_CONFIDENCE_SOURCES = {"opening", "effective"}
 CONFIDENCE_SOURCE = "opening"
+PREDICTION_STYLE = PREDICTION_STYLE_DEFAULT
 
 
 @dataclass
@@ -74,6 +78,10 @@ class MatchReportRow:
     home_team: str
     away_team: str
     recommendation: str
+    prediction_style: str
+    style_adjusted: str
+    base_recommendation: str
+    style_reason: str
     structure_label: str
     original_confidence: str
     final_confidence: str
@@ -84,6 +92,10 @@ class MatchReportRow:
     effective_mode: str
     final_action: str
     final_prediction: str
+    posthoc_calibration_action: str
+    posthoc_calibration_prediction: str
+    posthoc_calibration_risk: str
+    posthoc_calibration_basis: str
     decision_basis: str
     mode_selection_basis: str
     mode_history_accuracy: str
@@ -105,11 +117,12 @@ def parse_datetime_bjt(value: str) -> datetime:
 
 def build_future_schedule_dates(start_bjt: datetime, end_bjt: datetime) -> list[str]:
     dates: list[str] = []
-    current = start_bjt.date()
+    # Titan 的未来赛程页会滚动保留一部分次日凌晨比赛，回看前一天页面更稳妥。
+    current = start_bjt.date() - timedelta(days=1)
     end_date = end_bjt.date()
     while current <= end_date:
         dates.append(current.strftime("%Y%m%d"))
-        current = current.fromordinal(current.toordinal() + 1)
+        current += timedelta(days=1)
     return dates
 
 
@@ -364,6 +377,10 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             opening_rows,
             closing_rows,
             match_started=CURRENT_TIME_BJT >= match.kickoff_bjt,
+            prediction_style=PREDICTION_STYLE,
+            league=match.league,
+            home_team=match.home_team,
+            away_team=match.away_team,
         )
     except Exception as error:  # noqa: BLE001
         return None, [
@@ -410,7 +427,17 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             kickoff_text=format_kickoff_bjt(match.kickoff_bjt),
             home_team=match.home_team,
             away_team=match.away_team,
-            recommendation=opening_prediction["recommendation"],
+            recommendation=opening_prediction.get("baseRecommendation", opening_prediction["recommendation"]),
+            prediction_style=PREDICTION_STYLE_LABELS.get(PREDICTION_STYLE, PREDICTION_STYLE),
+            style_adjusted="是" if prediction["effectivePrediction"].get("styleAdjusted") else "否",
+            base_recommendation=prediction["effectivePrediction"].get(
+                "baseRecommendation",
+                prediction["finalPrediction"],
+            ),
+            style_reason=prediction["effectivePrediction"].get(
+                "styleReason",
+                "使用默认模式，未启用高赔冷门改判。",
+            ),
             structure_label=opening_prediction["confidenceProfile"]["label"],
             original_confidence=prediction["originalConfidence"],
             final_confidence=prediction["finalConfidence"],
@@ -421,6 +448,10 @@ def process_future_match(match: FutureMatch) -> tuple[MatchReportRow | None, lis
             effective_mode=prediction["effectiveModeLabel"],
             final_action=prediction["finalAction"],
             final_prediction=prediction["finalPrediction"],
+            posthoc_calibration_action=prediction["posthocCalibrationAction"],
+            posthoc_calibration_prediction=prediction["posthocCalibrationPrediction"],
+            posthoc_calibration_risk=prediction["posthocCalibrationRisk"],
+            posthoc_calibration_basis=prediction["posthocCalibrationBasis"],
             decision_basis=prediction["decisionBasis"],
             mode_selection_basis=prediction["modeSelectionBasis"],
             mode_history_accuracy=prediction["modeHistoryAccuracy"],
@@ -471,6 +502,10 @@ def append_match_rows(sheet, rows: Iterable[MatchReportRow]) -> None:
                 row.home_team,
                 row.away_team,
                 row.recommendation,
+                row.prediction_style,
+                row.style_adjusted,
+                row.base_recommendation,
+                row.style_reason,
                 row.structure_label,
                 row.original_confidence,
                 row.final_confidence,
@@ -481,6 +516,10 @@ def append_match_rows(sheet, rows: Iterable[MatchReportRow]) -> None:
                 row.effective_mode,
                 row.final_action,
                 row.final_prediction,
+                row.posthoc_calibration_action,
+                row.posthoc_calibration_prediction,
+                row.posthoc_calibration_risk,
+                row.posthoc_calibration_basis,
                 row.decision_basis,
                 row.mode_selection_basis,
                 row.mode_history_accuracy,
@@ -513,6 +552,75 @@ def append_league_section(
     sheet.append(detail_headers)
     style_header_row(sheet, header_row_index)
     append_match_rows(sheet, league_rows)
+
+
+def append_posthoc_calibration_sheet(workbook: Workbook) -> None:
+    sheet = workbook.create_sheet("赛后校准规则")
+    sheet["A1"] = "赛后校准/风险修正建议"
+    sheet["A1"].font = Font(bold=True, size=13)
+    sheet["A2"] = "样本来源"
+    sheet["B2"] = "四期 Titan007 预测与实际赛果复盘；1366场入选，1362场完赛，4场推迟/改期剔除。"
+    sheet["A3"] = "总体命中"
+    sheet["B3"] = "高信任单选 143/223=64.1%；中信任单选 226/457=49.5%；中信任双选 508/682=74.5%。"
+    sheet["A4"] = "使用边界"
+    sheet["B4"] = "防平/补平/回避类规则样本外有效；改方向类规则已撤销。风险等级低/中/高命中约68%/62%/48%。本页规则不改写原模型结果，生产报表不抓取实际赛果。"
+
+    current_row = 6
+    sheet.cell(current_row, 1, "双选规则")
+    sheet.cell(current_row, 1).font = Font(bold=True)
+    sheet.cell(current_row, 1).fill = section_fill()
+    current_row += 1
+    double_headers = ["触发条件", "赛后校准动作", "校准建议结果", "风险", "依据"]
+    sheet.append(double_headers)
+    style_header_row(sheet, current_row)
+    current_row += 1
+    double_rows = [
+        ["结构=高-分胜负", "优先第一个", "第一项", "低", "四期第一项命中69%，全不中仅6%。"],
+        ["市场共识0.78~0.82", "优先第一个", "第一项", "低", "该共识区间第一项命中52%，是双选第一项最稳区间。"],
+        ["最终预测结果=主胜/平局 或 客胜/平局", "优先第一个", "主胜/客胜", "低/中", "X/平局组合第一项命中47%~48%，落空仅22%~24%；偏客结构需降权。"],
+        ["前二差值>0.06", "优先第一个", "第一项", "中", "差值>0.06后第一项稳定占优，命中46%~47%。"],
+        ["前二差值<0.03", "优先第二个", "第二项", "中", "排序几乎无意义，第二项41%高于第一项28%。"],
+        ["最终预测结果=平局/主胜", "优先第二个", "主胜", "中", "平局/主胜是反向信号，第二项主胜47%高于平局28%。"],
+        ["市场共识>0.86", "优先第二个", "第二项", "中", "市场过度一致时第二项37%反超第一项32%；平局只作保护。"],
+        ["偏平/偏客结构的主客对冲", "补平或回避", "平局保护", "高", "主客对冲落空即平局；偏平/偏客出平36%~38%，偏客+高共识约50%。"],
+        ["结构=中-偏客", "降权保留", "原双选", "高", "中-偏客双选四期全不中39%，各期均为最弱结构，但不反买。"],
+        ["结构=高-强客", "回避", "回避", "高", "高-强客双选四期7场全不中71%，直接作为高风险形态。"],
+    ]
+    for row in double_rows:
+        sheet.append(row)
+        current_row += 1
+
+    current_row += 2
+    sheet.cell(current_row, 1, "单选规则")
+    sheet.cell(current_row, 1).font = Font(bold=True)
+    sheet.cell(current_row, 1).fill = section_fill()
+    current_row += 1
+    single_headers = ["触发条件", "赛后校准动作", "校准建议结果", "风险", "依据"]
+    sheet.append(single_headers)
+    style_header_row(sheet, current_row)
+    current_row += 1
+    single_rows = [
+        ["高信任女足单选", "跟随", "原单选", "低", "高信任女足25/30命中，命中率83%。"],
+        ["高信任前二差值>0.55", "跟随", "原单选", "低", "该档27/33命中，命中率82%。"],
+        ["高信任市场共识>=0.84", "跟随", "原单选", "低", "该档69/98命中，命中率70%。"],
+        ["高信任其他单选", "跟随", "原单选", "中", "高信任单选整体143/223命中，命中率64.1%。"],
+        ["主胜单 + 前二差值0.45~0.55 + 共识<0.84", "改带平双选", "主胜/平局", "高", "低共识伪强区命中约48%，优先补平。"],
+        ["中信任女足单选", "谨慎跟随", "原单选", "中", "中信任女足32/51命中，命中率63%。"],
+        ["中信任结构=谨慎-不建议单押", "谨慎跟随", "原单选", "中", "中信任里相对较好，127/233命中，命中率55%。"],
+        ["中信任市场共识0.80~0.88", "回避", "不跟", "高", "中信任该共识段仅约38%~39%命中。"],
+        ["平局单", "回避", "不跟", "高", "主动选平局仅23%命中，平局只适合防守。"],
+        ["客胜单 + 前二差值<0.5", "谨慎补平或回避", "客胜/平局", "中", "客胜低差值波动较大，优先补平而不是反买主胜。"],
+        ["其他中信任/弱单选", "谨慎防平", "原单选/平局", "中", "单选打偏时约52%~53%去向为平局。"],
+    ]
+    for row in single_rows:
+        sheet.append(row)
+        current_row += 1
+
+    set_column_widths(sheet, {1: 34, 2: 18, 3: 18, 4: 10, 5: 48})
+    for row_cells in sheet.iter_rows(min_row=1):
+        for cell in row_cells:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    sheet.freeze_panes = "A7"
 
 
 def append_betting_decision_table_sheet(workbook: Workbook) -> None:
@@ -627,8 +735,10 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
     overview["B4"] = "固定 6 家公司初赔齐全；若已到开球时间且临场赔率齐全，则在初赔/临场/初赔+临场三种模式中按保守约束自动择优。"
     overview["A5"] = "预测条件"
     overview["B5"] = f"输出预测信任等级为{format_confidence_scope()}的比赛（按{format_confidence_source_label()}筛选）"
-    overview["A6"] = "运行时点（北京时间）"
-    overview["B6"] = format_kickoff_bjt(CURRENT_TIME_BJT)
+    overview["A6"] = "预测风格"
+    overview["B6"] = PREDICTION_STYLE_LABELS.get(PREDICTION_STYLE, PREDICTION_STYLE)
+    overview["A7"] = "运行时点（北京时间）"
+    overview["B7"] = format_kickoff_bjt(CURRENT_TIME_BJT)
 
     phase_counts = {"未开赛": 0, "已开球": 0}
     mode_counts = {"初赔": 0, "临场": 0, "初赔+临场": 0}
@@ -636,30 +746,30 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         phase_counts[row.phase_status] = phase_counts.get(row.phase_status, 0) + 1
         mode_counts[row.effective_mode] = mode_counts.get(row.effective_mode, 0) + 1
 
-    overview["A7"] = f"{format_confidence_scope()}信任比赛数"
-    overview["B7"] = len(rows)
-    overview["A8"] = "未开赛场次"
-    overview["B8"] = phase_counts.get("未开赛", 0)
-    overview["A9"] = "已开球场次"
-    overview["B9"] = phase_counts.get("已开球", 0)
-    overview["A10"] = "初赔模式生效场次"
-    overview["B10"] = mode_counts.get("初赔", 0)
-    overview["A11"] = "临场模式生效场次"
-    overview["B11"] = mode_counts.get("临场", 0)
-    overview["A12"] = "初赔+临场模式生效场次"
-    overview["B12"] = mode_counts.get("初赔+临场", 0)
-    overview["A13"] = "扫描备注数"
-    overview["B13"] = len(audit_rows)
+    overview["A8"] = f"{format_confidence_scope()}信任比赛数"
+    overview["B8"] = len(rows)
+    overview["A9"] = "未开赛场次"
+    overview["B9"] = phase_counts.get("未开赛", 0)
+    overview["A10"] = "已开球场次"
+    overview["B10"] = phase_counts.get("已开球", 0)
+    overview["A11"] = "初赔模式生效场次"
+    overview["B11"] = mode_counts.get("初赔", 0)
+    overview["A12"] = "临场模式生效场次"
+    overview["B12"] = mode_counts.get("临场", 0)
+    overview["A13"] = "初赔+临场模式生效场次"
+    overview["B13"] = mode_counts.get("初赔+临场", 0)
+    overview["A14"] = "扫描备注数"
+    overview["B14"] = len(audit_rows)
 
-    overview["A15"] = "联赛"
-    overview["B15"] = "场次"
-    style_header_row(overview, 15)
+    overview["A16"] = "联赛"
+    overview["B16"] = "场次"
+    style_header_row(overview, 16)
 
     league_counts: dict[str, int] = {}
     for row in rows:
         league_counts[row.league] = league_counts.get(row.league, 0) + 1
 
-    current_row = 16
+    current_row = 17
     for league, count in sorted(league_counts.items()):
         overview.cell(current_row, 1, league)
         overview.cell(current_row, 2, count)
@@ -676,6 +786,10 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         "主队",
         "客队",
         "原始预测结果",
+        "预测风格",
+        "模式是否改判",
+        "默认推荐结果",
+        "模式说明",
         "结构标签",
         "原始信任等级",
         "最终信任等级",
@@ -686,6 +800,10 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
         "生效预测模式",
         "最终决策动作",
         "最终预测结果",
+        "赛后校准动作",
+        "校准建议结果",
+        "校准风险等级",
+        "校准依据",
         "决策依据",
         "模式选择依据",
         "模式历史准确率",
@@ -727,27 +845,35 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
                 2: 18,
                 3: 18,
                 4: 12,
-                5: 14,
-                6: 10,
-                7: 10,
-                8: 34,
-                9: 10,
+                5: 12,
+                6: 12,
+                7: 14,
+                8: 36,
+                9: 14,
                 10: 10,
-                11: 12,
-                12: 12,
-                13: 14,
-                14: 14,
-                15: 28,
-                16: 36,
-                17: 36,
-                18: 12,
-                19: 36,
-                20: 12,
-                21: 40,
-                22: 36,
-                23: 60,
-                24: 60,
-                25: 42,
+                11: 10,
+                12: 34,
+                13: 10,
+                14: 10,
+                15: 12,
+                16: 12,
+                17: 14,
+                18: 14,
+                19: 14,
+                20: 16,
+                21: 12,
+                22: 34,
+                23: 28,
+                24: 36,
+                25: 36,
+                26: 12,
+                27: 36,
+                28: 12,
+                29: 40,
+                30: 36,
+                31: 60,
+                32: 60,
+                33: 42,
             },
         )
         sheet.freeze_panes = "A1"
@@ -755,6 +881,7 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
             for cell in row_cells:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
 
+    append_posthoc_calibration_sheet(workbook)
     append_betting_decision_table_sheet(workbook)
     append_live_mode_selection_sheet(workbook)
 
@@ -785,7 +912,7 @@ def write_workbook(rows: list[MatchReportRow], audit_rows: list[dict[str, str]],
 
 
 def main() -> None:
-    global WINDOW_START_BJT, WINDOW_END_BJT, FUTURE_SCHEDULE_DATES, ALLOWED_CONFIDENCES, CURRENT_TIME_BJT, CONFIDENCE_SOURCE
+    global WINDOW_START_BJT, WINDOW_END_BJT, FUTURE_SCHEDULE_DATES, ALLOWED_CONFIDENCES, CURRENT_TIME_BJT, CONFIDENCE_SOURCE, PREDICTION_STYLE
 
     parser = argparse.ArgumentParser(
         description="根据北京时间范围抓取球探未来赛程，生成开球感知的欧赔预测 Excel。"
@@ -809,6 +936,11 @@ def main() -> None:
         "--confidence-source",
         default="opening",
         help="信任等级筛选口径：opening=按原始信任等级；effective=按最终信任等级。",
+    )
+    parser.add_argument(
+        "--prediction-style",
+        default=PREDICTION_STYLE_DEFAULT,
+        help="预测风格：default=默认模式；high_odds_upset=高赔冷门模式。",
     )
     parser.add_argument(
         "--now",
@@ -846,14 +978,17 @@ def main() -> None:
         raise ValueError(
             f"不支持的 confidence-source: {CONFIDENCE_SOURCE}；仅支持 {', '.join(sorted(VALID_CONFIDENCE_SOURCES))}。"
         )
+    PREDICTION_STYLE = normalize_prediction_style(args.prediction_style)
 
     rows, audit_rows = iter_report_rows()
     if args.output:
         output_path = args.output
     else:
         confidence_slug = "_".join(sorted(ALLOWED_CONFIDENCES))
+        style_slug = f"_{PREDICTION_STYLE}" if PREDICTION_STYLE != PREDICTION_STYLE_DEFAULT else ""
         output_path = OUTPUT_DIR / (
-            f"titan007_{confidence_slug}_confidence_"
+            f"titan007_{confidence_slug}_confidence"
+            f"{style_slug}_"
             f"{WINDOW_START_BJT.strftime('%Y%m%d_%H%M')}_"
             f"{WINDOW_END_BJT.strftime('%Y%m%d_%H%M')}.xlsx"
         )

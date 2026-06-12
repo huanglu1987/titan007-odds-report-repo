@@ -18,6 +18,13 @@ CALIBRATED_MODE_LABELS = {
     "closing_only": "临场",
     "hybrid": "初赔+临场",
 }
+PREDICTION_STYLE_DEFAULT = "default"
+PREDICTION_STYLE_HIGH_ODDS_UPSET = "high_odds_upset"
+PREDICTION_STYLE_LABELS = {
+    PREDICTION_STYLE_DEFAULT: "默认模式",
+    PREDICTION_STYLE_HIGH_ODDS_UPSET: "高赔冷门模式",
+}
+VALID_PREDICTION_STYLES = set(PREDICTION_STYLE_LABELS)
 CALIBRATED_ENGINE_LABELS = {
     "opening_only": "初赔监督学习模型",
     "closing_only": "临场监督学习模型",
@@ -30,6 +37,8 @@ MODE_SELECTION_DECISION_TYPE_LABELS = {
 }
 MODE_SELECTION_DEFAULT_MIN_SAMPLE = 30
 LIVE_HIGH_CONFIDENCE_FAVORITE_VOTE_CAP = 0.83
+HIGH_ODDS_UPSET_DRAW_MIN_ODDS = 3.20
+HIGH_ODDS_UPSET_SIDE_MIN_ODDS = 4.00
 
 _CALIBRATED_MODELS: dict[str, dict | None] = {}
 _LIVE_MODE_SELECTION: dict[tuple[str, str, str], dict] | None = None
@@ -559,6 +568,15 @@ def load_thresholds() -> dict:
 
 
 THRESHOLDS = load_thresholds()
+
+
+def normalize_prediction_style(prediction_style: str | None) -> str:
+    normalized = (prediction_style or PREDICTION_STYLE_DEFAULT).strip()
+    if normalized not in VALID_PREDICTION_STYLES:
+        raise ValueError(
+            f"不支持的 prediction_style: {normalized}；仅支持 {', '.join(sorted(VALID_PREDICTION_STYLES))}。"
+        )
+    return normalized
 
 
 def load_json_file(path: Path) -> dict | None:
@@ -1151,6 +1169,90 @@ def build_cold_upset_profile(
     }
 
 
+def average_outcome_odds(rows: list[dict], outcome_key: str) -> float:
+    return average([float(row[outcome_key]) for row in rows])
+
+
+def build_high_odds_upset_style_candidate(
+    *,
+    confidence_profile: dict[str, str],
+    ranked: list[dict[str, float]],
+    final_prob: dict[str, float],
+    metrics: dict[str, float],
+    source_rows: list[dict],
+    base_decision_type: str,
+) -> dict[str, str | bool | None]:
+    normalized_decision_type = normalize_decision_type(base_decision_type)
+    if normalized_decision_type not in {"double", "abstain"}:
+        return {
+            "active": False,
+            "label": "",
+            "predictedKey": None,
+            "note": "默认结果已经是单结果，高赔冷门模式不再额外改判。",
+        }
+
+    second_key = ranked[1]["key"]
+    top_gap = metrics["topGap"]
+    consensus = metrics["consensus"]
+    home_away_gap = metrics["homeAwayGap"]
+    favorite_vote_share = metrics["favoriteVoteShare"]
+    draw_prob = final_prob["draw"]
+    structure_label = confidence_profile["label"]
+
+    average_draw_odds = average_outcome_odds(source_rows, "draw")
+    if (
+        second_key == "draw"
+        and average_draw_odds >= HIGH_ODDS_UPSET_DRAW_MIN_ODDS
+        and consensus >= 0.80
+        and favorite_vote_share >= 0.83
+        and 0.24 <= draw_prob < 0.31
+        and (
+            (structure_label == "高-分胜负" and 0.12 <= top_gap < 0.20 and home_away_gap >= 0.12)
+            or (structure_label in {"高-防平", "中-偏平"} and top_gap < 0.12)
+            or (structure_label in {"中-偏主", "中-偏客"} and top_gap < 0.10 and draw_prob >= 0.27)
+        )
+    ):
+        return {
+            "active": True,
+            "label": "高赔冷门-平局",
+            "predictedKey": "draw",
+            "note": (
+                "高赔冷门模式命中：平局仍紧贴热门方向，且 6 家平均平赔"
+                f"{average_draw_odds:.2f} 已达到 {HIGH_ODDS_UPSET_DRAW_MIN_ODDS:.2f} 门槛，"
+                "因此把默认结果提升为高赔平局单选。"
+            ),
+        }
+
+    if second_key != "draw":
+        target_odds = average_outcome_odds(source_rows, second_key)
+        if (
+            target_odds >= HIGH_ODDS_UPSET_SIDE_MIN_ODDS
+            and consensus >= 0.84
+            and favorite_vote_share >= 0.83
+            and top_gap < 0.08
+            and home_away_gap < 0.08
+            and 0.24 <= draw_prob < 0.30
+            and structure_label in {"谨慎-主客胶着", "中-偏主", "中-偏客", "高-分胜负"}
+        ):
+            return {
+                "active": True,
+                "label": f"高赔冷门-{OUTCOME_LABELS[second_key]}",
+                "predictedKey": second_key,
+                "note": (
+                    "高赔冷门模式命中：主客两端仍然胶着，默认热门并不稳，且目标结果 6 家平均赔率"
+                    f"{target_odds:.2f} 已达到 {HIGH_ODDS_UPSET_SIDE_MIN_ODDS:.2f} 门槛，"
+                    f"因此把默认结果提升为高赔{OUTCOME_LABELS[second_key]}单选。"
+                ),
+            }
+
+    return {
+        "active": False,
+        "label": "",
+        "predictedKey": None,
+        "note": "未命中高赔冷门模式条件，沿用默认模式结果。",
+    }
+
+
 def build_rule_explanation(
     final_prob: dict[str, float],
     metrics: dict[str, float],
@@ -1380,6 +1482,184 @@ def get_betting_decision_table() -> list[dict[str, str]]:
     return rows
 
 
+def apply_prediction_style_to_rule_prediction(
+    prediction: dict,
+    source_rows: list[dict],
+    prediction_style: str,
+) -> dict:
+    normalized_style = normalize_prediction_style(prediction_style)
+    base_decision = dict(prediction["decision"])
+    base_recommendation = prediction["recommendation"]
+    style_profile = {
+        "active": False,
+        "label": "",
+        "predictedKey": None,
+        "note": "使用默认模式，未启用高赔冷门改判。",
+    }
+
+    prediction["predictionStyle"] = normalized_style
+    prediction["predictionStyleLabel"] = PREDICTION_STYLE_LABELS[normalized_style]
+    prediction["styleAdjusted"] = False
+    prediction["styleReason"] = style_profile["note"]
+    prediction["baseRecommendation"] = base_recommendation
+    prediction["baseDecision"] = base_decision
+    prediction["baseDecisionType"] = normalize_decision_type(base_decision["type"])
+    prediction["baseColdProfile"] = dict(prediction.get("coldProfile") or {})
+    prediction["styleProfile"] = style_profile
+    prediction["styleAdjustedPrediction"] = base_recommendation
+
+    if normalized_style == PREDICTION_STYLE_DEFAULT:
+        return prediction
+
+    ranked = sorted(
+        [
+            {"key": "home", "value": prediction["finalProb"]["home"]},
+            {"key": "draw", "value": prediction["finalProb"]["draw"]},
+            {"key": "away", "value": prediction["finalProb"]["away"]},
+        ],
+        key=lambda item: item["value"],
+        reverse=True,
+    )
+    style_profile = build_high_odds_upset_style_candidate(
+        confidence_profile=prediction["confidenceProfile"],
+        ranked=ranked,
+        final_prob=prediction["finalProb"],
+        metrics={
+            "topGap": prediction["metrics"]["topGap"],
+            "consensus": prediction["metrics"]["consensus"],
+            "homeAwayGap": prediction["metrics"]["homeAwayGap"],
+            "favoriteVoteShare": prediction["metrics"]["favoriteVoteShare"],
+        },
+        source_rows=source_rows,
+        base_decision_type=base_decision["type"],
+    )
+    prediction["styleProfile"] = style_profile
+    prediction["styleReason"] = style_profile["note"]
+    if not style_profile["active"]:
+        return prediction
+
+    predicted_key = style_profile["predictedKey"]
+    prediction["recommendation"] = OUTCOME_LABELS[predicted_key]
+    prediction["allowDouble"] = False
+    prediction["abstained"] = False
+    prediction["drawSingle"] = predicted_key == "draw"
+    prediction["decision"] = {
+        "type": "style-single",
+        "primaryKey": predicted_key,
+        "secondaryKey": None,
+    }
+    prediction["styleAdjusted"] = True
+    prediction["styleAdjustedPrediction"] = prediction["recommendation"]
+    prediction["explanation"] = f"{prediction['explanation']} {style_profile['note']}"
+    return prediction
+
+
+def build_calibrated_style_context(prediction: dict) -> tuple[dict | None, str]:
+    final_prob = {
+        OUTCOME_MAP[label]: float(probability)
+        for label, probability in prediction["probabilities"].items()
+    }
+    ranked = sorted(
+        [
+            {"key": "home", "value": final_prob["home"]},
+            {"key": "draw", "value": final_prob["draw"]},
+            {"key": "away", "value": final_prob["away"]},
+        ],
+        key=lambda item: item["value"],
+        reverse=True,
+    )
+    metrics = prediction.get("closingMetrics") if prediction.get("featureMode") in {"closing_only", "hybrid"} else None
+    if metrics is None:
+        metrics = prediction.get("openingMetrics") or prediction.get("closingMetrics")
+    if metrics is None:
+        return None, "当前模式缺少市场结构信息，无法评估高赔冷门改判。"
+
+    top_gap = prediction["topGap"]
+    base_confidence = confidence_label(metrics["consensus"], top_gap)
+    confidence_profile = build_rule_confidence_profile(
+        base_confidence,
+        ranked,
+        final_prob,
+        top_gap,
+    )
+    return {
+        "finalProb": final_prob,
+        "ranked": ranked,
+        "metrics": {
+            "topGap": top_gap,
+            "consensus": metrics["consensus"],
+            "homeAwayGap": abs(final_prob["home"] - final_prob["away"]),
+            "favoriteVoteShare": metrics["favoriteVoteShare"],
+        },
+        "confidence": base_confidence,
+        "confidenceProfile": confidence_profile,
+    }, ""
+
+
+def apply_prediction_style_to_calibrated_prediction(
+    prediction: dict,
+    source_rows: list[dict],
+    prediction_style: str,
+) -> dict:
+    normalized_style = normalize_prediction_style(prediction_style)
+    base_decision = dict(prediction["decision"])
+    base_prediction = prediction["prediction"]
+    style_profile = {
+        "active": False,
+        "label": "",
+        "predictedKey": None,
+        "note": "使用默认模式，未启用高赔冷门改判。",
+    }
+
+    prediction["predictionStyle"] = normalized_style
+    prediction["predictionStyleLabel"] = PREDICTION_STYLE_LABELS[normalized_style]
+    prediction["styleAdjusted"] = False
+    prediction["styleReason"] = style_profile["note"]
+    prediction["baseRecommendation"] = base_prediction
+    prediction["baseDecision"] = base_decision
+    prediction["baseDecisionType"] = normalize_decision_type(base_decision["type"])
+    prediction["baseColdProfile"] = {}
+    prediction["styleProfile"] = style_profile
+    prediction["styleAdjustedPrediction"] = base_prediction
+
+    style_context, context_note = build_calibrated_style_context(prediction)
+    if style_context:
+        prediction["finalProb"] = style_context["finalProb"]
+        prediction["confidence"] = style_context["confidence"]
+        prediction["confidenceProfile"] = style_context["confidenceProfile"]
+    else:
+        prediction["styleReason"] = context_note
+
+    if normalized_style == PREDICTION_STYLE_DEFAULT:
+        return prediction
+    if style_context is None:
+        return prediction
+
+    style_profile = build_high_odds_upset_style_candidate(
+        confidence_profile=style_context["confidenceProfile"],
+        ranked=style_context["ranked"],
+        final_prob=style_context["finalProb"],
+        metrics=style_context["metrics"],
+        source_rows=source_rows,
+        base_decision_type=base_decision["type"],
+    )
+    prediction["styleProfile"] = style_profile
+    prediction["styleReason"] = style_profile["note"]
+    if not style_profile["active"]:
+        return prediction
+
+    predicted_key = style_profile["predictedKey"]
+    prediction["decision"] = {
+        "type": "single",
+        "primary": predicted_key,
+        "secondary": None,
+    }
+    prediction["prediction"] = OUTCOME_LABELS[predicted_key]
+    prediction["styleAdjusted"] = True
+    prediction["styleAdjustedPrediction"] = prediction["prediction"]
+    return prediction
+
+
 def validate_rows(rows: list[dict]) -> list[dict]:
     if len(rows) != len(FIXED_COMPANIES):
         raise ValueError(f"必须提供 {len(FIXED_COMPANIES)} 家公司的初始赔率。")
@@ -1400,7 +1680,10 @@ def validate_rows(rows: list[dict]) -> list[dict]:
     return normalized
 
 
-def compute_rule_prediction(rows: list[dict]) -> dict:
+def compute_rule_prediction(
+    rows: list[dict],
+    prediction_style: str = PREDICTION_STYLE_DEFAULT,
+) -> dict:
     clean_rows = validate_rows(rows)
     favorite_votes = {"home": 0, "draw": 0, "away": 0}
 
@@ -1600,7 +1883,7 @@ def compute_rule_prediction(rows: list[dict]) -> dict:
         },
     )
 
-    return {
+    prediction = {
         "companies": FIXED_COMPANIES,
         "recommendation": recommendation,
         "bettingDecision": betting_decision,
@@ -1639,6 +1922,11 @@ def compute_rule_prediction(rows: list[dict]) -> dict:
             cold_profile,
         ),
     }
+    return apply_prediction_style_to_rule_prediction(
+        prediction,
+        clean_rows,
+        prediction_style,
+    )
 
 
 def bucket_live_mode_top_gap(top_gap: float) -> str:
@@ -1849,6 +2137,7 @@ def compute_calibrated_prediction(
     opening_rows: list[dict] | None,
     closing_rows: list[dict] | None,
     feature_mode: str,
+    prediction_style: str = PREDICTION_STYLE_DEFAULT,
 ) -> dict:
     payload = get_calibration_model_data(feature_mode)
     if payload is None:
@@ -1865,7 +2154,7 @@ def compute_calibrated_prediction(
     ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
     top_gap = ranked[0][1] - ranked[1][1]
 
-    return {
+    prediction = {
         "featureMode": feature_mode,
         "modeLabel": CALIBRATED_MODE_LABELS[feature_mode],
         "engine": "supervised",
@@ -1880,6 +2169,18 @@ def compute_calibrated_prediction(
         "decisionPolicy": supervised_model["decisionPolicy"],
         "highConfidencePolicy": supervised_model.get("highConfidencePolicy"),
     }
+    source_rows = (
+        closing_rows
+        if feature_mode in {"closing_only", "hybrid"} and closing_rows
+        else opening_rows
+    )
+    if source_rows is None:
+        return prediction
+    return apply_prediction_style_to_calibrated_prediction(
+        prediction,
+        source_rows,
+        prediction_style,
+    )
 
 
 def resolve_live_mode_selection(rule_prediction: dict) -> tuple[dict | None, dict[str, str], dict]:
@@ -1917,15 +2218,288 @@ def get_live_mode_selection_table() -> list[dict[str, str]]:
     return rows
 
 
+def split_posthoc_prediction(prediction: str) -> list[str]:
+    parts = [
+        item.strip()
+        for item in prediction.replace("／", "/").split("/")
+        if item.strip()
+    ]
+    return [item for item in parts if item in {"主胜", "平局", "客胜"}]
+
+
+def is_women_match(league: str = "", home_team: str = "", away_team: str = "") -> bool:
+    return any("女" in item for item in (league, home_team, away_team))
+
+
+def build_posthoc_calibration_advice(
+    *,
+    final_prediction: str,
+    final_action: str = "",
+    final_confidence: str = "",
+    structure_label: str = "",
+    market_consensus: float = 0.0,
+    top_gap: float = 0.0,
+    league: str = "",
+    home_team: str = "",
+    away_team: str = "",
+) -> dict[str, str]:
+    """Apply the four-window post-hoc Titan007 review rules."""
+    prediction_parts = split_posthoc_prediction(final_prediction)
+    first = prediction_parts[0] if prediction_parts else ""
+    second = prediction_parts[1] if len(prediction_parts) > 1 else ""
+    is_double = len(prediction_parts) == 2
+    is_single = len(prediction_parts) == 1
+    no_draw_double = is_double and "平局" not in prediction_parts
+    side_draw_double = is_double and second == "平局" and first in {"主胜", "客胜"}
+    confidence = final_confidence or (
+        "高" if "高" in final_action else ("中" if "中" in final_action else "")
+    )
+
+    if is_double:
+        if structure_label == "高-强客":
+            return {
+                "action": "建议回避",
+                "recommendation": "回避",
+                "risk": "高",
+                "basis": "高-强客降级双选四期合并7场全不中71%，直接作为高风险回避形态处理。",
+            }
+        if structure_label == "高-分胜负":
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高-分胜负双选四期第一项命中69%，全不中仅6%，可优先按第一项理解。",
+            }
+        if no_draw_double and structure_label in {"中-偏平", "中-偏客"}:
+            return {
+                "action": "建议补平或回避",
+                "recommendation": "平局保护",
+                "risk": "高",
+                "basis": "偏平/偏客结构的主客对冲双选四期出平率36%~38%，偏客+高共识约50%，平局只作防守保护。",
+            }
+        if final_prediction == "平局/主胜":
+            return {
+                "action": "优先第二个",
+                "recommendation": "主胜",
+                "risk": "中",
+                "basis": "平局/主胜是四期明确反向信号，第二项主胜命中47%，高于第一项平局28%。",
+            }
+        if top_gap < 0.03:
+            return {
+                "action": "优先第二个",
+                "recommendation": second,
+                "risk": "中",
+                "basis": "前二差值<0.03时排序几乎无意义，四期第二项命中41%，高于第一项28%。",
+            }
+        if market_consensus > 0.86:
+            return {
+                "action": "优先第二个",
+                "recommendation": second,
+                "risk": "中",
+                "basis": "市场共识>0.86时第二项37%反超第一项32%；若第二项为平局，仅作保护而非进攻型平局单选。",
+            }
+        if 0.78 <= market_consensus <= 0.82:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "市场共识0.78~0.82是四期双选第一项最稳区间，第一项命中52%。",
+            }
+        if side_draw_double:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "低" if structure_label != "中-偏客" else "中",
+                "basis": "X/平局双选四期第一项命中47%~48%，落空率仅22%~24%；偏客结构仍需适度降权。",
+            }
+        if top_gap > 0.06:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "前二差值>0.06后第一项稳定占优，四期第一项命中46%~47%。",
+            }
+        if structure_label == "中-偏客":
+            return {
+                "action": "降权保留",
+                "recommendation": final_prediction,
+                "risk": "高",
+                "basis": "中-偏客双选四期全不中39%，各期均为最弱结构；保留原双选但不反买另一端。",
+            }
+        return {
+            "action": "保留原双选",
+            "recommendation": final_prediction,
+            "risk": "中",
+            "basis": "未触发四期版明确取舍规则，保留模型原双选输出。",
+        }
+
+    if is_single:
+        if first == "平局":
+            return {
+                "action": "建议回避",
+                "recommendation": "不跟",
+                "risk": "高",
+                "basis": "模型主动选平局四期仅23%命中，低于实际平局基率；平局只适合防守，不适合作进攻型单选。",
+            }
+        if (
+            first == "主胜"
+            and 0.45 <= top_gap <= 0.55
+            and market_consensus < 0.84
+        ):
+            return {
+                "action": "建议改带平双选",
+                "recommendation": "主胜/平局",
+                "risk": "高",
+                "basis": "主胜单 + 前二差值0.45~0.55 + 共识<0.84 四期命中约48%，低于高信任基准，优先补平。",
+            }
+        if confidence == "高" and is_women_match(league, home_team, away_team):
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高信任女足单选四期25/30命中，命中率83%。",
+            }
+        if confidence == "高" and top_gap > 0.55:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高信任单选前二差值>0.55四期27/33命中，命中率82%。",
+            }
+        if confidence == "高" and market_consensus >= 0.84:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高信任单选市场共识>=0.84四期69/98命中，命中率70%。",
+            }
+        if confidence == "高":
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "高信任单选四期整体143/223命中，命中率64%，可跟随但不属于低风险加分子集。",
+            }
+        if confidence == "中" and is_women_match(league, home_team, away_team):
+            return {
+                "action": "谨慎跟随",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "中信任女足单选四期32/51命中，命中率63%，是中信任可用子集。",
+            }
+        if confidence == "中" and structure_label == "谨慎-不建议单押":
+            return {
+                "action": "谨慎跟随",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "中信任单选中，结构=谨慎-不建议单押四期127/233命中，命中率55%，是相对较好的子集。",
+            }
+        if confidence == "中" and 0.80 <= market_consensus <= 0.88:
+            return {
+                "action": "建议回避",
+                "recommendation": "不跟",
+                "risk": "高",
+                "basis": "中信任单选市场共识0.80~0.88四期仅约38%~39%命中，是中信任最差共识段。",
+            }
+        if first == "客胜" and top_gap < 0.5:
+            return {
+                "action": "谨慎补平或回避",
+                "recommendation": "客胜/平局",
+                "risk": "中",
+                "basis": "客胜单低差值时波动较大；单选不看好时四期复盘优先补平而不是直接反买主胜。",
+            }
+        if is_women_match(league, home_team, away_team):
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "女足单选四期整体命中显著高于男足，可作为通用加分信号。",
+            }
+        if top_gap > 0.55 or market_consensus >= 0.84:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "前二差值>0.55或市场共识>=0.84属于四期单选加分信号。",
+            }
+        return {
+            "action": "谨慎防平",
+            "recommendation": f"{first}/平局" if first != "平局" else "回避",
+            "risk": "中",
+            "basis": "中信任单选默认降权；单选打偏时约52%~53%去向为平局，优先补平而不是反买另一端。",
+        }
+
+    return {
+        "action": "无校准建议",
+        "recommendation": final_prediction or "",
+        "risk": "中",
+        "basis": "最终预测结果不是可识别的单选或双选，保留原结果。",
+    }
+
+
+def build_report_posthoc_payload(
+    *,
+    final_prediction: str,
+    final_action: str,
+    opening_prediction: dict,
+    final_confidence: str = "",
+    league: str = "",
+    home_team: str = "",
+    away_team: str = "",
+) -> dict[str, str | dict[str, str]]:
+    metrics = opening_prediction.get("metrics") or {}
+    structure_label = (opening_prediction.get("confidenceProfile") or {}).get("label", "")
+    posthoc_advice = build_posthoc_calibration_advice(
+        final_prediction=final_prediction,
+        final_action=final_action,
+        final_confidence=final_confidence,
+        structure_label=structure_label,
+        market_consensus=metrics.get("consensus", 0.0),
+        top_gap=metrics.get("topGap", 0.0),
+        league=league,
+        home_team=home_team,
+        away_team=away_team,
+    )
+    return {
+        "posthocCalibration": posthoc_advice,
+        "posthocCalibrationAction": posthoc_advice["action"],
+        "posthocCalibrationPrediction": posthoc_advice["recommendation"],
+        "posthocCalibrationRisk": posthoc_advice["risk"],
+        "posthocCalibrationBasis": posthoc_advice["basis"],
+    }
+
+
 def compute_report_prediction(
     opening_rows: list[dict],
     closing_rows: list[dict] | None = None,
     *,
     match_started: bool = False,
+    prediction_style: str = PREDICTION_STYLE_DEFAULT,
+    league: str = "",
+    home_team: str = "",
+    away_team: str = "",
 ) -> dict:
-    opening_prediction = compute_rule_prediction(opening_rows)
+    normalized_style = normalize_prediction_style(prediction_style)
+    opening_prediction = compute_rule_prediction(
+        opening_rows,
+        prediction_style=normalized_style,
+    )
     key_parts = build_mode_selection_key(opening_prediction)
     key_label = format_mode_selection_key_parts(key_parts)
+
+    def with_posthoc_calibration(result: dict) -> dict:
+        result.update(
+            build_report_posthoc_payload(
+                final_prediction=result["finalPrediction"],
+                final_action=result["finalAction"],
+                final_confidence=result.get("finalConfidence", ""),
+                opening_prediction=opening_prediction,
+                league=league,
+                home_team=home_team,
+                away_team=away_team,
+            )
+        )
+        return result
 
     if not match_started:
         confidence_info = build_mode_aware_confidence(
@@ -1933,7 +2507,7 @@ def compute_report_prediction(
             opening_prediction,
             match_started=False,
         )
-        return {
+        return with_posthoc_calibration({
             "openingPrediction": opening_prediction,
             "effectiveMode": "opening_only",
             "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
@@ -1942,14 +2516,18 @@ def compute_report_prediction(
             "modeHistoryAccuracy": opening_prediction["bettingDecision"]["historyAccuracySummary"],
             "historySampleSize": opening_prediction["bettingDecision"]["historySampleSize"],
             "historyAccuracySummary": opening_prediction["bettingDecision"]["historyAccuracySummary"],
-            "finalAction": opening_prediction["bettingDecision"]["action"],
-            "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
+            "finalAction": (
+                "高赔冷门单选"
+                if opening_prediction.get("styleAdjusted")
+                else opening_prediction["bettingDecision"]["action"]
+            ),
+            "finalPrediction": opening_prediction["recommendation"],
             "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
             "originalConfidence": confidence_info["originalConfidence"],
             "finalConfidence": confidence_info["finalConfidence"],
             "confidenceBasis": confidence_info["confidenceBasis"],
             "effectivePrediction": opening_prediction,
-        }
+        })
 
     if not closing_rows:
         confidence_info = build_mode_aware_confidence(
@@ -1958,7 +2536,7 @@ def compute_report_prediction(
             match_started=True,
             selection_row_found=False,
         )
-        return {
+        return with_posthoc_calibration({
             "openingPrediction": opening_prediction,
             "effectiveMode": "opening_only",
             "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
@@ -1967,14 +2545,18 @@ def compute_report_prediction(
             "modeHistoryAccuracy": opening_prediction["bettingDecision"]["historyAccuracySummary"],
             "historySampleSize": opening_prediction["bettingDecision"]["historySampleSize"],
             "historyAccuracySummary": opening_prediction["bettingDecision"]["historyAccuracySummary"],
-            "finalAction": opening_prediction["bettingDecision"]["action"],
-            "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
+            "finalAction": (
+                "高赔冷门单选"
+                if opening_prediction.get("styleAdjusted")
+                else opening_prediction["bettingDecision"]["action"]
+            ),
+            "finalPrediction": opening_prediction["recommendation"],
             "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
             "originalConfidence": confidence_info["originalConfidence"],
             "finalConfidence": confidence_info["finalConfidence"],
             "confidenceBasis": confidence_info["confidenceBasis"],
             "effectivePrediction": opening_prediction,
-        }
+        })
 
     live_selection_row, _, live_meta = resolve_live_mode_selection(opening_prediction)
     preferred_mode = "closing_only"
@@ -1993,6 +2575,7 @@ def compute_report_prediction(
                 opening_rows,
                 closing_rows,
                 feature_mode,
+                prediction_style=normalized_style,
             )
         except Exception as error:
             live_errors.append(f"{CALIBRATED_MODE_LABELS[feature_mode]}推理失败：{error}")
@@ -2018,7 +2601,7 @@ def compute_report_prediction(
                 match_started=True,
                 selection_row_found=False,
             )
-            return {
+            return with_posthoc_calibration({
                 "openingPrediction": opening_prediction,
                 "effectiveMode": "opening_only",
                 "effectiveModeLabel": CALIBRATED_MODE_LABELS["opening_only"],
@@ -2027,14 +2610,18 @@ def compute_report_prediction(
                 "modeHistoryAccuracy": opening_prediction["bettingDecision"]["historyAccuracySummary"],
                 "historySampleSize": opening_prediction["bettingDecision"]["historySampleSize"],
                 "historyAccuracySummary": opening_prediction["bettingDecision"]["historyAccuracySummary"],
-                "finalAction": opening_prediction["bettingDecision"]["action"],
-                "finalPrediction": opening_prediction["bettingDecision"]["finalPrediction"],
+                "finalAction": (
+                    "高赔冷门单选"
+                    if opening_prediction.get("styleAdjusted")
+                    else opening_prediction["bettingDecision"]["action"]
+                ),
+                "finalPrediction": opening_prediction["recommendation"],
                 "decisionBasis": opening_prediction["bettingDecision"]["decisionBasis"],
                 "originalConfidence": confidence_info["originalConfidence"],
                 "finalConfidence": confidence_info["finalConfidence"],
                 "confidenceBasis": confidence_info["confidenceBasis"],
                 "effectivePrediction": opening_prediction,
-            }
+            })
 
     selected_prediction = live_predictions[preferred_mode]
     confidence_info = build_mode_aware_confidence(
@@ -2059,11 +2646,15 @@ def compute_report_prediction(
         )
         history_sample_size = "样本不足"
 
-    final_action = "单选" if decision_type == "single" else "双选"
+    final_action = (
+        "高赔冷门单选"
+        if selected_prediction.get("styleAdjusted")
+        else ("单选" if decision_type == "single" else "双选")
+    )
     if live_errors:
         selection_reason = f"{selection_reason}；{'；'.join(live_errors)}"
 
-    return {
+    return with_posthoc_calibration({
         "openingPrediction": opening_prediction,
         "effectiveMode": preferred_mode,
         "effectiveModeLabel": selected_prediction["modeLabel"],
@@ -2079,4 +2670,4 @@ def compute_report_prediction(
         "finalConfidence": confidence_info["finalConfidence"],
         "confidenceBasis": confidence_info["confidenceBasis"],
         "effectivePrediction": selected_prediction,
-    }
+    })

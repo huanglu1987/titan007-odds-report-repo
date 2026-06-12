@@ -2235,6 +2235,7 @@ def build_posthoc_calibration_advice(
     *,
     final_prediction: str,
     final_action: str = "",
+    final_confidence: str = "",
     structure_label: str = "",
     market_consensus: float = 0.0,
     top_gap: float = 0.0,
@@ -2242,12 +2243,17 @@ def build_posthoc_calibration_advice(
     home_team: str = "",
     away_team: str = "",
 ) -> dict[str, str]:
-    """Apply the 2026-05-16~18 post-hoc Titan007 review rules."""
+    """Apply the four-window post-hoc Titan007 review rules."""
     prediction_parts = split_posthoc_prediction(final_prediction)
     first = prediction_parts[0] if prediction_parts else ""
+    second = prediction_parts[1] if len(prediction_parts) > 1 else ""
     is_double = len(prediction_parts) == 2
     is_single = len(prediction_parts) == 1
     no_draw_double = is_double and "平局" not in prediction_parts
+    side_draw_double = is_double and second == "平局" and first in {"主胜", "客胜"}
+    confidence = final_confidence or (
+        "高" if "高" in final_action else ("中" if "中" in final_action else "")
+    )
 
     if is_double:
         if structure_label == "高-强客":
@@ -2255,78 +2261,85 @@ def build_posthoc_calibration_advice(
                 "action": "建议回避",
                 "recommendation": "回避",
                 "risk": "高",
-                "basis": "高-强客降级双选在两期复盘中样本很小且落空率高，作为高风险形态处理。",
-            }
-        if structure_label == "中-偏客" and no_draw_double:
-            if market_consensus > 0.86:
-                return {
-                    "action": "建议改选平局",
-                    "recommendation": "平局",
-                    "risk": "高",
-                    "basis": "中-偏客 + 主/客对冲 + 市场共识>0.86 时，复盘样本约64%打出平局。",
-                }
-            return {
-                "action": "建议补平或回避",
-                "recommendation": "平局保护",
-                "risk": "高",
-                "basis": "中-偏客的主/客对冲双选平局漏选风险高，复盘样本约46%出平局。",
-            }
-        if structure_label == "中-偏客" and final_prediction == "客胜/平局":
-            return {
-                "action": "警惕主胜",
-                "recommendation": "主胜保护/回避",
-                "risk": "高",
-                "basis": "中-偏客 + 客胜/平局组合复盘中约半数打出主胜，被排除的主胜需要保护。",
-            }
-        if final_prediction == "主胜/平局":
-            return {
-                "action": "优先第一个",
-                "recommendation": "主胜",
-                "risk": "低",
-                "basis": "主胜/平局是两期复盘的黄金组合，第一项命中27/48，任一命中率高。",
+                "basis": "高-强客降级双选四期合并7场全不中71%，直接作为高风险回避形态处理。",
             }
         if structure_label == "高-分胜负":
             return {
                 "action": "优先第一个",
                 "recommendation": first,
                 "risk": "低",
-                "basis": "高-分胜负降级双选第一项命中7/9，可优先按第一项理解。",
+                "basis": "高-分胜负双选四期第一项命中69%，全不中仅6%，可优先按第一项理解。",
+            }
+        if no_draw_double and structure_label in {"中-偏平", "中-偏客"}:
+            return {
+                "action": "建议补平或回避",
+                "recommendation": "平局保护",
+                "risk": "高",
+                "basis": "偏平/偏客结构的主客对冲双选四期出平率36%~38%，偏客+高共识约50%，平局只作防守保护。",
+            }
+        if final_prediction == "平局/主胜":
+            return {
+                "action": "优先第二个",
+                "recommendation": "主胜",
+                "risk": "中",
+                "basis": "平局/主胜是四期明确反向信号，第二项主胜命中47%，高于第一项平局28%。",
+            }
+        if top_gap < 0.03:
+            return {
+                "action": "优先第二个",
+                "recommendation": second,
+                "risk": "中",
+                "basis": "前二差值<0.03时排序几乎无意义，四期第二项命中41%，高于第一项28%。",
             }
         if market_consensus > 0.86:
             return {
-                "action": "第一/第二均衡",
-                "recommendation": final_prediction,
+                "action": "优先第二个",
+                "recommendation": second,
                 "risk": "中",
-                "basis": "市场共识>0.86时第一、第二选项命中率接近，不强行改方向。",
+                "basis": "市场共识>0.86时第二项37%反超第一项32%；若第二项为平局，仅作保护而非进攻型平局单选。",
             }
-        if structure_label in {"中-偏平", "中-偏主"}:
+        if 0.78 <= market_consensus <= 0.82:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "市场共识0.78~0.82是四期双选第一项最稳区间，第一项命中52%。",
+            }
+        if side_draw_double:
+            return {
+                "action": "优先第一个",
+                "recommendation": first,
+                "risk": "低" if structure_label != "中-偏客" else "中",
+                "basis": "X/平局双选四期第一项命中47%~48%，落空率仅22%~24%；偏客结构仍需适度降权。",
+            }
+        if top_gap > 0.06:
             return {
                 "action": "优先第一个",
                 "recommendation": first,
                 "risk": "中",
-                "basis": f"{structure_label} 双选在复盘中第一项更占优，但仍建议保留原双选作保护。",
+                "basis": "前二差值>0.06后第一项稳定占优，四期第一项命中46%~47%。",
             }
-        if 0.78 <= market_consensus <= 0.82:
+        if structure_label == "中-偏客":
             return {
-                "action": "偏第一项",
-                "recommendation": first,
-                "risk": "中",
-                "basis": "市场共识0.78~0.82区间第一选项最稳，复盘第一项命中率约55%。",
+                "action": "降权保留",
+                "recommendation": final_prediction,
+                "risk": "高",
+                "basis": "中-偏客双选四期全不中39%，各期均为最弱结构；保留原双选但不反买另一端。",
             }
         return {
             "action": "保留原双选",
             "recommendation": final_prediction,
             "risk": "中",
-            "basis": "未触发明确校准规则，保留模型原双选输出。",
+            "basis": "未触发四期版明确取舍规则，保留模型原双选输出。",
         }
 
     if is_single:
-        if first == "平局" or structure_label in {"中-偏平", "高-防平"}:
+        if first == "平局":
             return {
                 "action": "建议回避",
                 "recommendation": "不跟",
                 "risk": "高",
-                "basis": "平局单/偏平防平结构单选在两期复盘中6场全未中。",
+                "basis": "模型主动选平局四期仅23%命中，低于实际平局基率；平局只适合防守，不适合作进攻型单选。",
             }
         if (
             first == "主胜"
@@ -2337,48 +2350,83 @@ def build_posthoc_calibration_advice(
                 "action": "建议改带平双选",
                 "recommendation": "主胜/平局",
                 "risk": "高",
-                "basis": "主胜单 + 前二差值0.45~0.55 + 共识<0.84 命中率仅约40%，优先补平。",
+                "basis": "主胜单 + 前二差值0.45~0.55 + 共识<0.84 四期命中约48%，低于高信任基准，优先补平。",
+            }
+        if confidence == "高" and is_women_match(league, home_team, away_team):
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高信任女足单选四期25/30命中，命中率83%。",
+            }
+        if confidence == "高" and top_gap > 0.55:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高信任单选前二差值>0.55四期27/33命中，命中率82%。",
+            }
+        if confidence == "高" and market_consensus >= 0.84:
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "低",
+                "basis": "高信任单选市场共识>=0.84四期69/98命中，命中率70%。",
+            }
+        if confidence == "高":
+            return {
+                "action": "建议跟随",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "高信任单选四期整体143/223命中，命中率64%，可跟随但不属于低风险加分子集。",
+            }
+        if confidence == "中" and is_women_match(league, home_team, away_team):
+            return {
+                "action": "谨慎跟随",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "中信任女足单选四期32/51命中，命中率63%，是中信任可用子集。",
+            }
+        if confidence == "中" and structure_label == "谨慎-不建议单押":
+            return {
+                "action": "谨慎跟随",
+                "recommendation": first,
+                "risk": "中",
+                "basis": "中信任单选中，结构=谨慎-不建议单押四期127/233命中，命中率55%，是相对较好的子集。",
+            }
+        if confidence == "中" and 0.80 <= market_consensus <= 0.88:
+            return {
+                "action": "建议回避",
+                "recommendation": "不跟",
+                "risk": "高",
+                "basis": "中信任单选市场共识0.80~0.88四期仅约38%~39%命中，是中信任最差共识段。",
             }
         if first == "客胜" and top_gap < 0.5:
             return {
                 "action": "谨慎补平或回避",
                 "recommendation": "客胜/平局",
                 "risk": "中",
-                "basis": "客胜单整体波动较大，前二差值<0.5时建议补平或回避。",
+                "basis": "客胜单低差值时波动较大；单选不看好时四期复盘优先补平而不是直接反买主胜。",
             }
         if is_women_match(league, home_team, away_team):
             return {
                 "action": "建议跟随",
                 "recommendation": first,
                 "risk": "低",
-                "basis": "女足赛事单选两期复盘10/12命中，是较稳单选形态。",
+                "basis": "女足单选四期整体命中显著高于男足，可作为通用加分信号。",
             }
-        if top_gap > 0.55:
+        if top_gap > 0.55 or market_consensus >= 0.84:
             return {
                 "action": "建议跟随",
                 "recommendation": first,
                 "risk": "低",
-                "basis": "前二差值>0.55的单选复盘13/17命中。",
-            }
-        if first == "主胜" and market_consensus >= 0.84:
-            return {
-                "action": "建议跟随",
-                "recommendation": first,
-                "risk": "低",
-                "basis": "主胜单 + 市场共识>=0.84 复盘27/39命中。",
-            }
-        if structure_label == "高-强主":
-            return {
-                "action": "建议跟随",
-                "recommendation": first,
-                "risk": "低",
-                "basis": "高-强主单选复盘39/59命中。",
+                "basis": "前二差值>0.55或市场共识>=0.84属于四期单选加分信号。",
             }
         return {
             "action": "谨慎防平",
             "recommendation": f"{first}/平局" if first != "平局" else "回避",
             "risk": "中",
-            "basis": "单选未触发高稳规则时，复盘显示优先补平局，而不是直接反买另一端。",
+            "basis": "中信任单选默认降权；单选打偏时约52%~53%去向为平局，优先补平而不是反买另一端。",
         }
 
     return {
@@ -2394,6 +2442,7 @@ def build_report_posthoc_payload(
     final_prediction: str,
     final_action: str,
     opening_prediction: dict,
+    final_confidence: str = "",
     league: str = "",
     home_team: str = "",
     away_team: str = "",
@@ -2403,6 +2452,7 @@ def build_report_posthoc_payload(
     posthoc_advice = build_posthoc_calibration_advice(
         final_prediction=final_prediction,
         final_action=final_action,
+        final_confidence=final_confidence,
         structure_label=structure_label,
         market_consensus=metrics.get("consensus", 0.0),
         top_gap=metrics.get("topGap", 0.0),
@@ -2442,6 +2492,7 @@ def compute_report_prediction(
             build_report_posthoc_payload(
                 final_prediction=result["finalPrediction"],
                 final_action=result["finalAction"],
+                final_confidence=result.get("finalConfidence", ""),
                 opening_prediction=opening_prediction,
                 league=league,
                 home_team=home_team,
