@@ -2257,52 +2257,38 @@ def build_posthoc_calibration_advice(
 
     if is_double:
         if no_draw_double:
-            if top_gap < 0.06:
-                return {
-                    "action": "改第二项/平局",
-                    "recommendation": f"{second}/平局",
-                    "risk": "中",
-                    "basis": "主客对冲双选且前二差值<0.06时，五期回测改为第二项+平局约76.3%，高于原对冲66.9%；建议降一档仓位。",
-                }
             return {
                 "action": "保留原双选",
                 "recommendation": final_prediction,
                 "risk": "中",
-                "basis": "主客对冲双选且前二差值>=0.06时，原对冲在该区间约71.6%，优于第二项+平局58.6%；但对冲类整体平局率约31%，仓位低于带平双选。",
+                "basis": "主客对冲双选九期复盘撤回改第二项+平局：部署后63%低于原双选76%（-13pp）；对冲平局率29%接近全体26%，保留原双选。",
             }
-        if top_gap < 0.02:
+        if draw_first_double and top_gap >= 0.03:
+            return {
+                "action": "保留原双选",
+                "recommendation": final_prediction,
+                "risk": "中",
+                "basis": "平局排第一且前二差值>=0.03时，不把平局进攻型单选化；平局仅作防守保护。",
+            }
+        if top_gap < 0.03:
             return {
                 "action": "优先第二个",
                 "recommendation": second,
                 "risk": "中",
-                "basis": "前二差值<0.02时第二项优势最集中，五期第二项命中46.0%，高于第一项28.6%。",
-            }
-        if top_gap < 0.03:
-            return {
-                "action": "保留原双选",
-                "recommendation": final_prediction,
-                "risk": "中",
-                "basis": "前二差值0.02~0.03跨期不稳定，作为缓冲区保留原双选，禁止单选化。",
-            }
-        if draw_first_double:
-            return {
-                "action": "保留原双选",
-                "recommendation": final_prediction,
-                "risk": "中",
-                "basis": "平局排第一但未进入<0.02强触发区时，不把平局进攻型单选化；平局仅作防守保护。",
+                "basis": "前二差值<0.03是九期复盘确认的排序开关，第二项合并优势+10.6pp、7/9期为正；撤销0.02细分。",
             }
         if top_gap >= 0.06:
             return {
                 "action": "优先第一个",
                 "recommendation": first,
                 "risk": "中",
-                "basis": "前二差值>=0.06时第一项明显占优，五期第一项约46%~47%，第二项约29%。",
+                "basis": "前二差值>=0.06时第一项优势稳定，九期复盘约+12.5pp。",
             }
         return {
             "action": "优先第一个",
             "recommendation": first,
             "risk": "中",
-            "basis": "前二差值0.03~0.06时不再优先第二个，第一项略占优但仍按中风险处理。",
+            "basis": "前二差值>=0.03越过九期硬反转点后，默认优先第一项。",
         }
 
     if is_single:
@@ -2313,6 +2299,20 @@ def build_posthoc_calibration_advice(
                 "risk": "高",
                 "basis": "模型主动选平局四期仅23%命中，低于实际平局基率；平局只适合防守，不适合作进攻型单选。",
             }
+        if structure_label == "谨慎-主客胶着":
+            return {
+                "action": "建议回避",
+                "recommendation": "不跟",
+                "risk": "高",
+                "basis": "谨慎-主客胶着是九期参数优化中的稳定弱结构，剩余单选池命中约31.4%，直接回避。",
+            }
+        if structure_label == "高-防平":
+            return {
+                "action": "建议回避",
+                "recommendation": "不跟",
+                "risk": "高",
+                "basis": "高-防平在九期参数优化中单选命中约35.5%，远低于池均，按高风险回避。",
+            }
         if (
             first == "主胜"
             and 0.45 <= top_gap <= 0.55
@@ -2322,7 +2322,7 @@ def build_posthoc_calibration_advice(
                 "action": "建议改带平双选",
                 "recommendation": "主胜/平局",
                 "risk": "高",
-                "basis": "主胜单 + 前二差值0.45~0.55 + 共识<0.84 四期命中约48%，低于高信任基准，优先补平。",
+                "basis": "建议改带平双选部署后31场命中87%，高于同场原预测71%，防守型补平规则九期复现强。",
             }
         if confidence == "高" and is_women_match(league, home_team, away_team):
             return {
@@ -2378,7 +2378,7 @@ def build_posthoc_calibration_advice(
                 "action": "谨慎补平或回避",
                 "recommendation": "客胜/平局",
                 "risk": "中",
-                "basis": "客胜单低差值时波动较大；单选不看好时四期复盘优先补平而不是直接反买主胜。",
+                "basis": "谨慎补平或回避部署后25场校准命中72%，高于同场原预测40%；单选不看好时优先补平而不是反买。",
             }
         if is_women_match(league, home_team, away_team):
             return {
@@ -2398,7 +2398,7 @@ def build_posthoc_calibration_advice(
             "action": "谨慎防平",
             "recommendation": f"{first}/平局" if first != "平局" else "回避",
             "risk": "中",
-            "basis": "中信任单选默认降权；单选打偏时约52%~53%去向为平局，优先补平而不是反买另一端。",
+            "basis": "谨慎防平部署后109场校准命中73%，高于同场原预测44%；防守型单选规则九期复现最稳。",
         }
 
     return {
